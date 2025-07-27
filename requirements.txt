@@ -1,0 +1,35 @@
+# torch
+# Pillow
+# clip
+# tqdm
+# # glob, collections, io, os, shutil, subprocess are standard library modules and do not need to be listedtorch
+# Pillow
+# openai-clip==1.0.1
+# tqdm
+# tqdm==4.67.1
+# # glob, collections, io, os, shutil, subprocess are standard library modules and do not need to be listed
+
+colorama==0.4.6
+filelock==3.18.0
+fsspec==2025.3.2
+# ftfy==6.3.1
+ImageHash==4.3.2
+Jinja2==3.1.6
+MarkupSafe==3.0.2
+mpmath==1.3.0
+networkx==3.4.2
+numpy==2.2.4
+openai-clip==1.0.1
+pillow==11.2.1
+pip==24.0
+PyWavelets==1.8.0
+regex==2024.11.6
+scipy==1.15.2
+setuptools==78.1.0
+sympy==1.13.1
+torch==2.6.0
+torchaudio==2.6.0
+torchvision==0.21.0
+tqdm==4.67.1
+typing_extensions==4.13.2
+wcwidth==0.2.13
