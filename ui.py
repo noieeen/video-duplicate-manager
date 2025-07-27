@@ -7,6 +7,7 @@ from PyQt5.QtCore import pyqtSignal, QObject
 from PIL import Image
 import torch
 from main import process_videos, find_duplicates, process_duplicates, extract_frame, preprocess, model, device
+import subprocess
 
 class ProcessingWorker(QObject):
     progress_signal = pyqtSignal(int)
@@ -166,6 +167,46 @@ class VideoDuplicateManagerUI(QMainWindow):
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
+
+def extract_frame(video_path, output_path):
+    """Robust frame extraction with multiple fallback methods"""
+    for seek_time in ["00:05:00", "00:02:00", "00:10:00"]:
+        try:
+            cmd = [
+                "ffmpeg",
+                "-ss", seek_time,
+                "-i", video_path,
+                "-vframes", "1",
+                "-q:v", "2",
+                "-f", "image2",
+                "-y",
+                output_path
+            ]
+            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                return True
+        except:
+            continue
+    
+    try:
+        cmd = [
+            "ffmpeg",
+            "-ss", "00:05:00",
+            "-i", video_path,
+            "-vframes", "1",
+            "-f", "rawvideo",
+            "-pix_fmt", "rgb24",
+            "-s", "1920x1080",
+            "-y",
+            "-"
+        ]
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.stdout:
+            img = Image.frombytes('RGB', (1920, 1080), result.stdout)
+            img.save(output_path, "JPEG", quality=90)
+            return True
+    except:
+        return False
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
