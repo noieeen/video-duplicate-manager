@@ -5,7 +5,7 @@ a = Analysis(
     ['ui.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\Noie\\Desktop\\dev\\viedo-management\\.venv\\Lib\\site-packages\\clip\\bpe_simple_vocab_16e6.txt.gz', 'clip')],
+    datas=[('.venv\\Lib\\site-packages\\clip\\bpe_simple_vocab_16e6.txt.gz', 'clip')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

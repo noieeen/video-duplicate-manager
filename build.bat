@@ -7,7 +7,7 @@ if %errorlevel% neq 0 (
 )
 
 REM Locate the missing file for clip
-set CLIP_FILE_PATH="C:\Users\Noie\Desktop\dev\viedo-management\.venv\Lib\site-packages\clip\bpe_simple_vocab_16e6.txt.gz"
+set CLIP_FILE_PATH=".venv\Lib\site-packages\clip\bpe_simple_vocab_16e6.txt.gz"
 if not exist %CLIP_FILE_PATH% (
     echo Missing file: bpe_simple_vocab_16e6.txt.gz. Please verify the path.
     pause
