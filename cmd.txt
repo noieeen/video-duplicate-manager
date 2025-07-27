@@ -2,3 +2,9 @@ pip install -r requirements.txt
 
 ## Activate virtual env
 .venv\Scripts\activate
+
+## run
+python main.py
+
+## clear clear
+pip cache purge

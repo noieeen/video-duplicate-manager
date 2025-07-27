@@ -1,9 +1,12 @@
 import sys
 import os
 import threading
+import glob
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QPushButton, QLabel, QProgressBar, QFileDialog, QWidget, QListWidget, QLineEdit
 from PyQt5.QtCore import pyqtSignal, QObject
-from main import process_videos, find_duplicates, process_duplicates
+from PIL import Image
+import torch
+from main import process_videos, find_duplicates, process_duplicates, extract_frame, preprocess, model, device
 
 class ProcessingWorker(QObject):
     progress_signal = pyqtSignal(int)
@@ -18,19 +21,33 @@ class ProcessingWorker(QObject):
     def run(self):
         try:
             # Step 1: Process videos
-            video_embeddings = process_videos(self.source_dirs)
+            video_embeddings = {}
+            video_files = []
+            for dir_path in self.source_dirs:
+                if self._stop_requested:
+                    self.stop_signal.emit()
+                    return
+                video_files.extend(glob.glob(os.path.join(dir_path, "**", "*.mp4"), recursive=True))
+                video_files.extend(glob.glob(os.path.join(dir_path, "**", "*.ts"), recursive=True))
 
-            # Emit progress for video processing
-            self.progress_signal.emit(33)
-
-            if self._stop_requested:
-                self.stop_signal.emit()
-                return
+            for i, video_path in enumerate(video_files):
+                if self._stop_requested:
+                    self.stop_signal.emit()
+                    return
+                filename = os.path.basename(video_path)
+                frame_path = os.path.join("temp_data", os.path.splitext(filename)[0] + ".jpg")
+                if extract_frame(video_path, frame_path):
+                    try:
+                        image = preprocess(Image.open(frame_path)).unsqueeze(0).to(device)
+                        with torch.no_grad():
+                            embedding = model.encode_image(image).cpu().numpy()
+                        video_embeddings[video_path] = embedding[0]
+                    except:
+                        continue
+                self.progress_signal.emit(int((i + 1) / len(video_files) * 33))
 
             # Step 2: Find duplicates
             groups = find_duplicates(video_embeddings, similarity_threshold=0.95)
-
-            # Emit progress for duplicate finding
             self.progress_signal.emit(66)
 
             if self._stop_requested:
@@ -39,8 +56,6 @@ class ProcessingWorker(QObject):
 
             # Step 3: Process duplicates
             process_duplicates(groups, keep_best=True, duplicate_dir=self.duplicate_folder_path)
-
-            # Emit progress for completion
             self.progress_signal.emit(100)
         except Exception as e:
             print(f"Error: {str(e)}")
