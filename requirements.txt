@@ -34,3 +34,4 @@ tqdm==4.67.1
 typing_extensions==4.13.2
 wcwidth==0.2.13
 PyQt5
+pyinstaller

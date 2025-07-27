@@ -1,10 +1,15 @@
 pip install -r requirements.txt
 
-## Activate virtual env
-.venv\Scripts\activate
+.venv\Scripts\activate## Activate virtual env
+
 
 ## run
 python main.py
 
 ## clear clear
 pip cache purge
+
+## build app
+# ensure installed pyinstaller
+(pip show pyinstaller)
+active .venv then run build.bat
