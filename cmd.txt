@@ -13,3 +13,5 @@ pip cache purge
 # ensure installed pyinstaller
 (pip show pyinstaller)
 active .venv then run build.bat
+
+
