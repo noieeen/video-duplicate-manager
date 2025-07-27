@@ -11,12 +11,6 @@ import torch
 from main import process_videos, find_duplicates, process_duplicates, extract_frame, preprocess, model, device
 import subprocess
 
-# Ensure GPU utilization
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
-
 def process_video(video_path):
     filename = os.path.basename(video_path)
     frame_path = os.path.join("temp_data", os.path.splitext(filename)[0] + ".jpg")
@@ -29,15 +23,6 @@ def process_video(video_path):
         except:
             return None, None
     return None, None
-
-def process_video_with_progress(video_path, progress_callback, total_videos):
-    result = process_video(video_path)
-    progress_callback()
-    return result
-
-def update_progress(processed_count, total_videos, progress_signal):
-    progress = int((processed_count / total_videos) * 100)
-    progress_signal.emit(progress)
 
 class ProcessingWorker(QObject):
     progress_signal = pyqtSignal(int)
@@ -53,40 +38,33 @@ class ProcessingWorker(QObject):
 
     def run(self):
         try:
-            # Step 1: Process videos
-            video_embeddings = {}
+            # Step 1: Process videos with multiprocessing
+            from multiprocessing import Pool
+
             video_files = []
             for dir_path in self.source_dirs:
-                if self._stop_requested:
-                    self.stop_signal.emit()
-                    return
                 video_files.extend(glob.glob(os.path.join(dir_path, "**", "*.mp4"), recursive=True))
                 video_files.extend(glob.glob(os.path.join(dir_path, "**", "*.ts"), recursive=True))
 
-            for i, video_path in enumerate(video_files):
-                if self._stop_requested:
-                    self.stop_signal.emit()
-                    return
-                filename = os.path.basename(video_path)
-                frame_path = os.path.join("temp_data", os.path.splitext(filename)[0] + ".jpg")
-                if extract_frame(video_path, frame_path):
-                    try:
-                        image = preprocess(Image.open(frame_path)).unsqueeze(0).to(device)
-                        with torch.no_grad():
-                            embedding = model.encode_image(image).cpu().numpy()
-                        video_embeddings[video_path] = embedding[0]
-                    except:
-                        continue
+            with Pool() as pool:
+                results = pool.map(process_video, video_files)
+
+            video_embeddings = {path: emb for path, emb in results if path and emb}
+            self.progress_signal.emit(33)
 
             # Step 2: Find duplicates
             groups = find_duplicates(video_embeddings, similarity_threshold=self.similarity_threshold)
+            self.progress_signal.emit(66)
 
-            if self._stop_requested:
-                self.stop_signal.emit()
-                return
-
-            # Step 3: Process duplicates
+            # Step 3: Process duplicates and generate report
             process_duplicates(groups, keep_best=True, duplicate_dir=self.duplicate_folder_path)
+            report_path = os.path.join(self.duplicate_folder_path, "duplicate_report.csv")
+            with open(report_path, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(["Duplicate Group", "Files"])
+                for i, group in enumerate(groups):
+                    writer.writerow([f"Group {i+1}", ", ".join(group)])
+            self.progress_signal.emit(100)
         except Exception as e:
             self.error_signal.emit(str(e))
 
