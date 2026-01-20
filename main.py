@@ -11,7 +11,7 @@ import io
 
 # --- Settings ---
 SOURCE_DIRS =[
-              r"C:\Users\Noie\Downloads\Video",
+              r"D:\A-Super",
               r"D:\new",
               r"D:\new-2",
               r"D:\new-3",
@@ -22,8 +22,14 @@ SOURCE_DIRS =[
               r"D:\new-8",
               r"D:\new-9",
               r"D:\new-10",
+              r"D:\new-11",
+              r"D:\new-12",
+              r"D:\new-13",
+              r"D:\fav",
+              r"D:\big",
               r"D:\big-fav",
               r"D:\video",
+              r"D:\Done",
               ]
 
 FRAME_DIR = r"D:\vid-frame"
@@ -165,9 +171,10 @@ for group in groups.values():
 print("\nDone. Remaining files in source folders:")
 for folder in SOURCE_DIRS:
     print(f"\nIn folder: {folder}")
-    for f in os.listdir(folder):
-        if f.lower().endswith(('.mp4', '.ts', '.mkv', '.avi', '.mov')):
-            print(f" - {f}")
+    if os.path.exists(folder):
+        for f in os.listdir(folder):
+            if f.lower().endswith(('.mp4', '.ts', '.mkv', '.avi', '.mov')):
+                print(f" - {f}")
 
 
 print("\nFiles moved to duplicates folder:")
