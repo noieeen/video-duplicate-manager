@@ -1,7 +1,13 @@
 .venv
-build
-dist
-__pycache__
+app
+dist*
+build*
+vendor
 output
+videos
 .git
-*.spec
+tests
+docs
+__pycache__
+.pytest_cache
+.env

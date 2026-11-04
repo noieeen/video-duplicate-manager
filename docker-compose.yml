@@ -1,14 +1,24 @@
-# Usage (PowerShell):  $env:VIDEO_DIR="D:/some-folder"; docker compose run --rm dedup
-# or copy .env.example to .env.  Duplicates are MOVED out of VIDEO_DIR into OUTPUT_DIR/duplicates.
+# Duplicate video engine, headless CLI.
+#
+# Usage (1 = scan, 2 = review, 3 = move duplicates):
+#   docker compose run --rm engine scan --root /videos
+#   docker compose run --rm engine groups
+#   docker compose run --rm engine confirm --all-pending
+#   docker compose run --rm engine apply --dup-root /output/duplicates
+#
+# Scan and review never move files. Duplicates are MOVED out of VIDEO_DIR into OUTPUT_DIR
+# only at the apply step, and only for confirmed groups. Undo: `engine undo --batch ID`
+# (see `history`).
+#
+# VIDEO_DIR / OUTPUT_DIR come from the shell or from a .env file (copy .env.example).
+# Defaults: ./videos and ./output.
 services:
-  dedup:
+  engine:
     build: .
-    environment:
-      SIMILARITY_THRESHOLD: ${SIMILARITY_THRESHOLD:-0.95}
     volumes:
-      - ${VIDEO_DIR:?set VIDEO_DIR to the folder to scan}:/videos
+      - ${VIDEO_DIR:-./videos}:/videos
       - ${OUTPUT_DIR:-./output}:/output
-      - clip-cache:/root/.cache/clip   # CLIP weights (~340MB), downloaded once
+      - engine-data:/data   # SQLite library + thumbnails
 
 volumes:
-  clip-cache:
+  engine-data:

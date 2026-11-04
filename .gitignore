@@ -6,3 +6,7 @@ build
 output
 .env
 temp_data
+dist-engine
+build-engine
+vendor
+.pytest_cache

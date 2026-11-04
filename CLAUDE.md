@@ -4,48 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Windows desktop tool that finds near-duplicate videos (`.mp4`, `.ts`) across folders and **moves** every copy except the "best" one into a duplicates folder. It has two entry points:
+A video duplicate finder made of two parts:
 
-- `main.py` is the CLI and the backend. Run directly, it scans the hard-coded `SOURCE_DIRS` (real `D:\` drives) and moves files. **Never run `python main.py` as a test.** Use a throwaway folder instead (see Docker / `docker/run.py`).
-- `ui.py` is the PyQt5 GUI. The user picks source folders and a duplicate folder, and the GUI calls `main`'s functions on a worker thread.
+- a headless Python **engine** (`engine/`) that owns all logic and the SQLite library;
+- an **Electron app** (`app/`, Vite + React + TypeScript) that only spawns the engine and renders its events.
 
-There are no tests, no linter and no package structure.
+Docker runs the same engine headless. **`docs/ENGINE_SPEC.md` is the contract** between all parts (module APIs, schema, CLI, events, `window.api`). Update it whenever you change an interface. `docs/REVIEW.md` records why the legacy PyQt/CLIP version (tag `stable`) was replaced.
 
-## Branches
+## Engine data flow
 
-`main` is the working branch (created from the `stable` tag). Both a branch and a tag are named `stable`, so use `refs/tags/stable` or `refs/heads/stable` in git commands. The planned direction (Python engine + SQLite + Electron app, with the PyQt GUI retired) is in `docs/IMPROVEMENT_PLAN.md`, and the known bugs are in `docs/REVIEW.md`.
+`scan` → `probe` (one `ffprobe -of json`) → `fingerprint` (pHash at 10/50/90% of duration; uniform frames dropped) → `grouping.find_groups` (duration window + all shared frames within Hamming distance, then union-find) → `scoring.pick_keeper` → `dup_groups`/`group_members` rows. `scan` never moves files. `apply` moves only `duplicate` members of `confirmed` groups. Before each move it writes an `actions` row and commits it, and it never overwrites. `undo` reverses a `batch_id`.
 
-- `master` = stable + a "parallel" attempt (`ui-v2.py`, `ui.py` edits). It is known broken: `ProcessingWorker.stop()` was removed, and `if path and emb` on a numpy array raises.
-- `feature/ui` branched off `init` and is CLI-only (its `ui.py` and `build.bat` are empty).
+Non-obvious points:
 
-## Architecture (stable)
-
-The pipeline lives in `main.py`:
-
-1. `process_videos`: recursive glob, then `extract_frame` (ffmpeg `-ss` at 5:00, then 2:00, then 10:00, with a raw 1920x1080 grab as last resort, 10s timeout each), then a CLIP `ViT-B/32` image embedding.
-2. `find_duplicates`: a greedy O(n²) pairwise cosine check with `> threshold` (default 0.95). The first-seen video anchors its group.
-3. `process_duplicates`: an `ffprobe` score (width × height × duration × bitrate) picks the keeper. The rest go `shutil.move` → `duplicate_dir/<basename>` (flat).
-
-Non-obvious coupling:
-
-- **Importing `main` has side effects.** It loads the CLIP model (and downloads it to `~/.cache/clip` on first run) and creates `FRAME_DIR`/`DUPLICATE_DIR` on `D:\`. `ui.py` imports `model`, `preprocess` and `device` from it.
-- `process_videos` reads the module global `FRAME_DIR` at call time, so callers can redirect it by assigning `main.FRAME_DIR` (this is how `docker/run.py` works).
-- `ui.py` reimplements the frame/embedding loop itself, writing frames to the relative `temp_data/`, so that it can report progress and stop. It also redefines `extract_frame` with `CREATE_NO_WINDOW`, which shadows the imported one. It uses `find_duplicates`/`process_duplicates` from `main` with `keep_best=True` and threshold 0.95 hard-coded.
+- pHash values are unsigned 64-bit but SQLite is signed. Always use `db.u64_to_db` / `db.u64_from_db`.
+- Paths are stored via `os.path.realpath`, which keeps the on-disk casing so moved files keep their names. Case-insensitive comparisons use `normcase` on top of that.
+- A re-scan reuses rows whose `(size, mtime)` are unchanged (`cached` in stats). It doesn't re-probe them.
+- `extract_frame` tries a fast input seek first, then falls back to an accurate output seek. MPEG-TS with sparse keyframes needs the fallback.
+- CLI global options go **before** the subcommand: `python -m engine --db X [--human] scan --root A`.
+- The app's dev mode spawns `<repo>/.venv/Scripts/python.exe -m engine`. Packaged mode spawns `resources/engine/engine.exe` plus `resources/ffmpeg/`. The thumbnail protocol `thumb://` only serves files under `userData/thumbs`.
 
 ## Commands
 
-Windows, from the repo root. Requires `ffmpeg`/`ffprobe` on PATH.
-
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python ui.py          # GUI
-build.bat             # PyInstaller one-file exe -> dist\VideoDuplicateManager.exe
+.venv/Scripts/python -m pytest -q                      # all tests (generate synthetic videos via ffmpeg)
+.venv/Scripts/python -m pytest -q tests/test_apply.py  # one file
+.venv/Scripts/python -m pytest -q -k collision         # one test
+cd app && npm run typecheck && npm run build           # app checks
+cd app && npm run dev                                  # run the app against the dev engine
+.\scripts\build_all.ps1                                # engine (PyInstaller) + ffmpeg + NSIS installer
+docker compose run --rm engine scan --root /videos     # headless, VIDEO_DIR mounted at /videos
 ```
 
-- `build.bat` bundles `.venv\Lib\site-packages\clip\bpe_simple_vocab_16e6.txt.gz` (CLIP's tokenizer vocab). The exe fails without it. `VideoDuplicateManager.spec` is the generated equivalent.
-- CLIP trap: the PyPI `openai-clip` can give `module 'clip' has no attribute 'load'`. The fix is `pip uninstall openai-clip && pip install git+https://github.com/openai/CLIP.git`.
-- Docker (headless CLI only, CPU torch, no GUI): `$env:VIDEO_DIR="D:/folder"; docker compose run --rm dedup`. The container mounts `VIDEO_DIR` → `/videos` and `OUTPUT_DIR` (default `./output`) → `/output/{frames,duplicates}`, and caches CLIP in the `clip-cache` volume. `docker compose build` also needs `VIDEO_DIR` set (any value).
-- Safe local run on a test folder without touching `D:\`: `PYTHONPATH=. SOURCE_DIRS="<dir1>;<dir2>" FRAME_DIR=<tmp> DUPLICATE_DIR=<tmp> .venv/Scripts/python docker/run.py`.
-- The current `.venv` has CPU torch. For CUDA: `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`.
+Never point a test or manual run at the owner's real video folders (`D:\...`). Use `tmp_path` or a scratch folder.
+
+## Branches
+
+`main` is the working branch (the GitHub default). The `stable` tag/branch and `master` hold the legacy PyQt/CLIP version: `master` = stable + a broken parallel attempt. Since both a branch and a tag are named `stable`, use `refs/tags/stable` in git commands.

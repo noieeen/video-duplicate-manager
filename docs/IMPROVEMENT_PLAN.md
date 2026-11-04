@@ -1,6 +1,6 @@
 # Improvement plan
 
-Status: proposal, nothing implemented yet. Updated 2026-11-05.
+Status: **implemented 2026-11-05** (Phases 0–4); see README.md and docs/ENGINE_SPEC.md. Decisions taken: pHash, React, per-group confirm + "Accept all suggestions".
 Base: branch `main` (created from `refs/tags/stable`). Findings referenced as R1–R8 are in [REVIEW.md](REVIEW.md).
 
 ## Decisions taken
