@@ -22,7 +22,7 @@ Things learned while building this repo (2026-11-05) that the code alone doesn't
 
 - Per file, sequential: ffprobe about 200 ms plus 3 frame grabs at about 250 ms each, which comes to about 1.0 file/s (about 28 min for 1,624 files).
 - Threads help because the work is subprocess/decode time (the GIL is released): 2 workers 1.8 files/s, **4 workers 2.6 files/s**, 8 workers 3.0 files/s. At 8, HDD seek contention shows (ffprobe median goes 206 → 816 ms). → Default 4 workers **per drive**, one pool per drive.
-- A GPU doesn't help this pipeline: pHash costs under 1 ms of CPU, and NVDEC setup costs more than decoding one frame. Revisit only for semantic embeddings or heavy 4K HEVC decode, and measure first.
+- A GPU doesn't help this pipeline: pHash costs under 1 ms of CPU, and NVDEC setup costs more than decoding one frame. Measured on an RTX 4070 with 1080p H.264 and a warm cache: one frame takes **CPU 247–321 ms vs `-hwaccel cuda` 606 ms**. Revisit only for semantic embeddings or heavy 4K HEVC decode, and measure first.
 - An exact-duplicate fast path (size + head/tail hash, about 94 ms/file to read) isn't worth it for this library: only 3 same-size sets out of 1,624 files.
 - Two scans reading the same HDD at once slow each other down badly. Don't benchmark while the app is scanning.
 
