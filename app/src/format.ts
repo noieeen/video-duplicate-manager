@@ -18,6 +18,10 @@ export function fmtMB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export function fmtGB(bytes: number | null | undefined): string {
+  return bytes === null || bytes === undefined ? "-" : `${(bytes / 1e9).toFixed(1)} GB`;
+}
+
 export function fmtDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();

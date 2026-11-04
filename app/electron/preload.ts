@@ -21,6 +21,7 @@ const api: Api = {
   showInFolder: (p: string) => ipcRenderer.invoke("shell:showInFolder", p),
   // "thumb" is a standard scheme, so the URL needs a host; the path is the encoded file path.
   fileUrl: (p: string) => `thumb://local/${encodeURIComponent(p)}`,
+  mediaUrl: (p: string) => `media://local/${encodeURIComponent(p)}`,
   // Electron 32+ removed File.path; webUtils is the replacement for drag-drop paths.
   pathForFile: (file: File) => webUtils.getPathForFile(file),
 };

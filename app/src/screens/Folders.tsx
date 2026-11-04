@@ -10,7 +10,17 @@ interface Props {
 
 export default function Folders({ settings, onChange, report }: Props) {
   const [dragOver, setDragOver] = useState(false);
+  const [excludeDraft, setExcludeDraft] = useState(settings.excludes.join("\n"));
   const dupInsideRoot = settings.roots.find((r) => isInside(settings.dupRoot, r));
+
+  // Saves the skip patterns on blur, one per line, trimmed, blanks dropped.
+  function saveExcludes() {
+    const excludes = excludeDraft
+      .split("\n")
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0);
+    if (excludes.join("\n") !== settings.excludes.join("\n")) onChange({ ...settings, excludes });
+  }
 
   function addRoots(paths: string[]) {
     const next = [...settings.roots];
@@ -106,6 +116,22 @@ export default function Folders({ settings, onChange, report }: Props) {
             scans. Choose a folder outside your roots.
           </p>
         )}
+      </div>
+
+      <div className="card">
+        <h3>Skip patterns</h3>
+        <textarea
+          className="mono"
+          rows={4}
+          style={{ width: "100%", boxSizing: "border-box" }}
+          value={excludeDraft}
+          onChange={(e) => setExcludeDraft(e.target.value)}
+          onBlur={saveExcludes}
+          placeholder={"Keep\n*.part.mp4\nD:\\Videos\\Old\\*"}
+        />
+        <p className="muted">
+          One per line. Matches a folder or file name, or a full path. Examples: Keep · *.part.mp4 · D:\Videos\Old\*
+        </p>
       </div>
     </div>
   );

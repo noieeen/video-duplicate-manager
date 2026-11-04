@@ -8,6 +8,7 @@ touches the database. Every sqlite call happens on the thread that called run_sc
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import sqlite3
@@ -25,7 +26,7 @@ from engine.scoring import pick_keeper, score
 VIDEO_EXTS = {".mp4", ".ts", ".mkv", ".avi", ".mov", ".m4v", ".wmv", ".webm", ".flv"}
 METHOD = "phash"
 DEFAULT_SETTINGS = {"max_distance": 10, "min_frames": 2, "duration_tol": 1.0, "method": METHOD, "workers": 4,
-                    "fresh": False}
+                    "fresh": False, "exclude": []}
 THUMB_WIDTH = 320
 COMMIT_EVERY = 50
 
@@ -51,14 +52,25 @@ def _normalise_roots(roots: list[str]) -> list[str]:
     return out
 
 
-def _walk(roots: list[str]) -> list[tuple[str, str]]:
-    """(normalised path, root it was found under) for every video file, sorted by path."""
+def _excluded(path: str, name: str, exclude: list[str]) -> bool:
+    """True when any exclude pattern matches the entry's name or its full path (case-insensitive)."""
+    texts = [os.path.normcase(name), os.path.normcase(path)]
+    return any(fnmatch.fnmatch(t, os.path.normcase(p)) for p in exclude for t in texts)
+
+
+def _walk(roots: list[str], exclude: list[str]) -> list[tuple[str, str]]:
+    """(normalised path, root it was found under) for every video file, sorted by path.
+
+    Excluded directories are pruned; excluded video files are skipped. A root is never excluded.
+    """
     found: list[tuple[str, str]] = []
     for root in roots:
-        for dirpath, _dirs, names in os.walk(root):
+        for dirpath, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if not _excluded(os.path.join(dirpath, d), d, exclude)]
             for name in names:
-                if os.path.splitext(name)[1].lower() in VIDEO_EXTS:
-                    found.append((os.path.join(dirpath, name), root))
+                path = os.path.join(dirpath, name)
+                if os.path.splitext(name)[1].lower() in VIDEO_EXTS and not _excluded(path, name, exclude):
+                    found.append((path, root))
     found.sort()
     return found
 
@@ -168,8 +180,8 @@ def _store(conn, path: str, root: str, st: os.stat_result, res: dict,
 
 
 def _index_files(conn, roots: list[str], thumbs_dir: str | None, workers: int,
-                 emit: Emit, fresh: bool = False) -> tuple[dict, set[str]]:
-    files = _walk(roots)
+                 emit: Emit, fresh: bool = False, exclude: list[str] = ()) -> tuple[dict, set[str]]:
+    files = _walk(roots, list(exclude))
     emit("files_found", count=len(files))
     total = len(files)
     stats = {"files": total, "cached": 0, "unreadable": 0}
@@ -304,8 +316,8 @@ def run_scan(
 ) -> int:
     """Scan roots and store the result. Returns the scan id.
 
-    Raises ValueError (before any row is written) when a root is not a directory or
-    `workers` is not an integer >= 1.
+    Raises ValueError (before any row is written) when a root is not a directory, `workers`
+    is not an integer >= 1, or `exclude` is not a list of strings.
     """
     cfg = {**DEFAULT_SETTINGS, **(settings or {})}
     for r in roots:
@@ -314,6 +326,9 @@ def run_scan(
     workers = cfg["workers"]
     if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
         raise ValueError(f"workers must be an integer >= 1: {workers!r}")
+    exclude = cfg["exclude"]
+    if not isinstance(exclude, list) or not all(isinstance(p, str) for p in exclude):
+        raise ValueError(f"exclude must be a list of strings: {exclude!r}")
     norm_roots = _normalise_roots(roots)
 
     # A scan killed from outside (the app's Cancel uses taskkill) never reaches its except-block,
@@ -330,7 +345,8 @@ def run_scan(
     emit("scan_started", scan_id=scan_id, roots=norm_roots)
 
     try:
-        stats, seen = _index_files(conn, norm_roots, thumbs_dir, workers, emit, fresh=bool(cfg["fresh"]))
+        stats, seen = _index_files(conn, norm_roots, thumbs_dir, workers, emit, fresh=bool(cfg["fresh"]),
+                                   exclude=exclude)
         _mark_missing(conn, norm_roots, seen)
         groups, duplicates = _build_groups(conn, scan_id, norm_roots, cfg, emit)
         stats.update(groups=groups, duplicates=duplicates)

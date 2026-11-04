@@ -71,19 +71,24 @@ def groups_json(
 
 
 def history_json(conn: sqlite3.Connection) -> list[dict]:
-    """One entry per batch, newest first. 'failed' counts moves with ok=0 or an unfinished ok NULL."""
+    """One entry per batch, newest first. 'failed' counts moves/trashes with ok=0 or an unfinished ok NULL.
+    'bytes' is the total size of the files moved or trashed successfully in the batch."""
     rows = conn.execute(
-        """SELECT batch_id, MIN(at) AS at,
-                  SUM(CASE WHEN op='move' AND ok=1 THEN 1 ELSE 0 END) AS moved,
-                  SUM(CASE WHEN op='restore' AND ok=1 THEN 1 ELSE 0 END) AS restored,
-                  SUM(CASE WHEN ok IS NULL OR ok=0 THEN 1 ELSE 0 END) AS failed
-             FROM actions
-            GROUP BY batch_id
-            ORDER BY MAX(id) DESC"""
+        """SELECT a.batch_id, MIN(a.at) AS at,
+                  SUM(CASE WHEN a.op='move' AND a.ok=1 THEN 1 ELSE 0 END) AS moved,
+                  SUM(CASE WHEN a.op='trash' AND a.ok=1 THEN 1 ELSE 0 END) AS trashed,
+                  SUM(CASE WHEN a.op='restore' AND a.ok=1 THEN 1 ELSE 0 END) AS restored,
+                  SUM(CASE WHEN a.ok IS NULL OR a.ok=0 THEN 1 ELSE 0 END) AS failed,
+                  COALESCE(SUM(CASE WHEN a.op IN ('move','trash') AND a.ok=1
+                                    THEN f.size ELSE 0 END), 0) AS bytes
+             FROM actions a
+             LEFT JOIN files f ON f.id = a.file_id
+            GROUP BY a.batch_id
+            ORDER BY MAX(a.id) DESC"""
     ).fetchall()
     return [
-        {"batch_id": r["batch_id"], "at": r["at"], "moved": r["moved"],
-         "restored": r["restored"], "failed": r["failed"]}
+        {"batch_id": r["batch_id"], "at": r["at"], "moved": r["moved"], "trashed": r["trashed"],
+         "restored": r["restored"], "failed": r["failed"], "bytes": r["bytes"]}
         for r in rows
     ]
 

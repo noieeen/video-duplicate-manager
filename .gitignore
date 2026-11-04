@@ -1,7 +1,8 @@
-﻿.venv
+.venv
 __pycache__
 dist
 build
+!app/build/
 
 output
 .env

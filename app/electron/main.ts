@@ -1,15 +1,77 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
+import { autoUpdater } from "electron-updater";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import type { EngineEvent, RunResult, Settings } from "../src/types";
 
 // Must be called before the app is ready. Lets the renderer load thumbnails via thumb://local/<encoded path>.
 protocol.registerSchemesAsPrivileged([
   { scheme: "thumb", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  // media://local/<encoded path>: video files for the Review compare player. stream: true is
+  // required for <video> to play from a custom scheme.
+  { scheme: "media", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
+
+const MEDIA_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".mkv": "video/x-matroska",
+  ".ts": "video/mp2t",
+  ".avi": "video/x-msvideo",
+  ".wmv": "video/x-ms-wmv",
+  ".flv": "video/x-flv",
+};
+
+/** Serve a video file with HTTP Range support, so <video> can seek. Only video extensions. */
+async function serveMedia(request: Request): Promise<Response> {
+  const encoded = new URL(request.url).pathname.replace(/^\//, "");
+  const file = path.resolve(decodeURIComponent(encoded));
+  const type = MEDIA_TYPES[path.extname(file).toLowerCase()];
+  if (!type) return new Response("forbidden", { status: 403 });
+  let size: number;
+  try {
+    size = (await fs.promises.stat(file)).size;
+  } catch {
+    return new Response("not found", { status: 404 });
+  }
+  const body = (start: number, end: number): ReadableStream =>
+    Readable.toWeb(fs.createReadStream(file, { start, end })) as ReadableStream;
+
+  const m = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get("range") ?? "");
+  if (!m || (m[1] === "" && m[2] === "")) {
+    return new Response(size > 0 ? body(0, size - 1) : null, {
+      status: 200,
+      headers: { "Content-Type": type, "Content-Length": String(size), "Accept-Ranges": "bytes" },
+    });
+  }
+  let start: number;
+  let end: number;
+  if (m[1] === "") {
+    start = Math.max(0, size - Number(m[2])); // suffix range: last N bytes
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (start >= size || start > end) {
+    return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+  }
+  return new Response(body(start, end), {
+    status: 206,
+    headers: {
+      "Content-Type": type,
+      "Content-Length": String(end - start + 1),
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+      "Accept-Ranges": "bytes",
+    },
+  });
+}
 
 // Dev only. The built main file is <repo>/app/dist-electron/main.js, so ../.. is the repo root.
 const REPO_ROOT = path.resolve(__dirname, "../..");
@@ -142,9 +204,15 @@ function loadSettings(): Settings {
       roots: Array.isArray(raw.roots) ? raw.roots.filter((r): r is string => typeof r === "string") : [],
       dupRoot: typeof raw.dupRoot === "string" ? raw.dupRoot : "",
       workers: clampWorkers(raw.workers),
+      excludes: Array.isArray(raw.excludes)
+        ? raw.excludes
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter((x) => x.length > 0)
+        : [],
     };
   } catch {
-    return { roots: [], dupRoot: "", workers: DEFAULT_WORKERS };
+    return { roots: [], dupRoot: "", workers: DEFAULT_WORKERS, excludes: [] };
   }
 }
 
@@ -156,7 +224,12 @@ function clampWorkers(v: unknown): number {
 
 function saveSettings(s: Settings): void {
   fs.mkdirSync(userData(), { recursive: true });
-  const clean: Settings = { roots: s.roots, dupRoot: s.dupRoot, workers: clampWorkers(s.workers) };
+  const clean: Settings = {
+    roots: s.roots,
+    dupRoot: s.dupRoot,
+    workers: clampWorkers(s.workers),
+    excludes: s.excludes,
+  };
   fs.writeFileSync(settingsPath(), JSON.stringify(clean, null, 2), "utf8");
 }
 
@@ -239,9 +312,14 @@ app.whenReady().then(() => {
     }
     return net.fetch(pathToFileURL(file).href);
   });
+  protocol.handle("media", serveMedia);
 
   registerIpc();
   createWindow();
+
+  // Installed builds only: check GitHub Releases, download in the background, offer a restart.
+  // Failures (offline, no release yet, unsigned build) are not worth bothering the user with.
+  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch(() => undefined);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

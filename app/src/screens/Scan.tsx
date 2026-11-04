@@ -7,6 +7,7 @@ interface Props {
   roots: string[];
   workers: number;
   onWorkersChange: (workers: number) => void;
+  excludes: string[];
   report: (msg: string) => void;
 }
 
@@ -16,7 +17,7 @@ interface Progress {
   path: string;
 }
 
-export default function Scan({ roots, workers, onWorkersChange, report }: Props) {
+export default function Scan({ roots, workers, onWorkersChange, excludes, report }: Props) {
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [found, setFound] = useState<number | null>(null);
@@ -63,7 +64,13 @@ export default function Scan({ roots, workers, onWorkersChange, report }: Props)
     setSummary(null);
     setOutcome(null);
 
-    const args = ["scan", "--workers", String(workers), ...roots.flatMap((r) => ["--root", r])];
+    const args = [
+      "scan",
+      "--workers",
+      String(workers),
+      ...roots.flatMap((r) => ["--root", r]),
+      ...excludes.flatMap((p) => ["--exclude", p]),
+    ];
     if (fresh) args.push("--fresh");
     const res = await runCli(args);
 
@@ -108,7 +115,10 @@ export default function Scan({ roots, workers, onWorkersChange, report }: Props)
   return (
     <div className="screen">
       <h2>Scan</h2>
-      <p className="muted">{roots.length} folder(s) will be scanned.</p>
+      <p className="muted">
+        {roots.length} folder(s) will be scanned.
+        {excludes.length > 0 && ` ${excludes.length} skip pattern(s).`}
+      </p>
 
       <div className="row">
         <label>

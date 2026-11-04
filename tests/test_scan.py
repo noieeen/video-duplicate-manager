@@ -343,3 +343,88 @@ def test_fresh_scan_ignores_cache_and_replaces_fingerprints(tmp_path, make_video
     assert len(paths(third)) == 1
     assert paths(third) == paths(first)
     conn.close()
+
+
+def _indexed_paths(conn):
+    return {r[0] for r in conn.execute("SELECT path FROM files")}
+
+
+def test_exclude_folder_name_prunes_at_any_depth(tmp_path, make_video):
+    root = tmp_path / "root"
+    make_video(root / "Keep" / "a.mp4", source="testsrc", w=160, h=120, duration=10)
+    make_video(root / "x" / "y" / "Keep" / "deep" / "b.mp4", source="mandelbrot", w=160, h=120, duration=10)
+    kept = make_video(root / "x" / "c.mp4", source="smpte", w=160, h=120, duration=10)
+
+    conn = _conn(tmp_path)
+    events, emit = _emitter()
+    scan_mod.run_scan(conn, [str(root)], emit, settings={"exclude": ["Keep"]})
+
+    assert _indexed_paths(conn) == {_norm(kept)}
+    assert [e["count"] for e in events if e["type"] == "files_found"] == [1]
+    conn.close()
+
+
+def test_exclude_file_glob_skips_matching_files_only(tmp_path, make_video):
+    root = tmp_path / "root"
+    make_video(root / "a.part.mp4", source="testsrc", w=160, h=120, duration=10)
+    make_video(root / "sub" / "b.part.mp4", source="mandelbrot", w=160, h=120, duration=10)
+    kept = make_video(root / "sub" / "c.mp4", source="smpte", w=160, h=120, duration=10)
+
+    conn = _conn(tmp_path)
+    _, emit = _emitter()
+    scan_mod.run_scan(conn, [str(root)], emit, settings={"exclude": ["*.part.mp4"]})
+
+    assert _indexed_paths(conn) == {_norm(kept)}
+    conn.close()
+
+
+def test_exclude_full_path_pattern(tmp_path, make_video):
+    root = tmp_path / "root"
+    make_video(root / "Old" / "a.mp4", source="testsrc", w=160, h=120, duration=10)
+    make_video(root / "Old" / "deep" / "b.mp4", source="mandelbrot", w=160, h=120, duration=10)
+    kept = make_video(root / "New" / "c.mp4", source="smpte", w=160, h=120, duration=10)
+
+    conn = _conn(tmp_path)
+    _, emit = _emitter()
+    pattern = os.path.join(_norm(str(root)), "Old", "*")
+    scan_mod.run_scan(conn, [str(root)], emit, settings={"exclude": [pattern]})
+
+    assert _indexed_paths(conn) == {_norm(kept)}
+    conn.close()
+
+
+def test_exclude_is_case_insensitive(tmp_path, make_video):
+    root = tmp_path / "root"
+    make_video(root / "Keep" / "a.mp4", source="testsrc", w=160, h=120, duration=10)
+    kept = make_video(root / "b.mp4", source="smpte", w=160, h=120, duration=10)
+
+    conn = _conn(tmp_path)
+    _, emit = _emitter()
+    scan_mod.run_scan(conn, [str(root)], emit, settings={"exclude": ["keep"]})
+
+    assert _indexed_paths(conn) == {_norm(kept)}
+    conn.close()
+
+
+def test_exclude_never_excludes_the_root_itself(tmp_path, make_video):
+    root = tmp_path / "Keep"  # the root's own name matches the pattern, but a root is never excluded
+    kept = make_video(root / "a.mp4", source="testsrc", w=160, h=120, duration=10)
+
+    conn = _conn(tmp_path)
+    _, emit = _emitter()
+    scan_mod.run_scan(conn, [str(root)], emit, settings={"exclude": ["Keep"]})
+
+    assert _indexed_paths(conn) == {_norm(kept)}
+    conn.close()
+
+
+@pytest.mark.parametrize("bad", ["*.part.mp4", [1], None])
+def test_invalid_exclude_raises_before_writing_a_scan(tmp_path, bad):
+    root = tmp_path / "root"
+    root.mkdir()
+    conn = _conn(tmp_path)
+    _, emit = _emitter()
+    with pytest.raises(ValueError):
+        scan_mod.run_scan(conn, [str(root)], emit, settings={"exclude": bad})
+    assert conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+    conn.close()

@@ -3,21 +3,24 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write # needed to publish GitHub Releases on tag pushes
     defaults:
       run:
         shell: bash
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -26,19 +29,29 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Install ffmpeg
+      - name: Install ffmpeg (gyan.dev essentials)
         shell: pwsh
         run: |
-          choco install ffmpeg -y --no-progress
-          # Chocolatey shims are launchers; point FFMPEG_BIN/FFPROBE_BIN at the real binaries so
-          # build_engine.py copies working executables.
-          $ff = Get-ChildItem "C:\ProgramData\chocolatey\lib\ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          $fp = Get-ChildItem "C:\ProgramData\chocolatey\lib\ffmpeg" -Recurse -Filter ffprobe.exe | Select-Object -First 1
-          if (-not $ff -or -not $fp) { throw "ffmpeg.exe/ffprobe.exe not found after choco install" }
+          $ProgressPreference = 'SilentlyContinue'
+          $dir = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP "ffmpeg-essentials.zip"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          # The archive wraps everything in a versioned folder; the executables live in its bin/ folder.
+          $ff = Get-ChildItem $dir -Recurse -Filter ffmpeg.exe | Where-Object { $_.Directory.Name -eq "bin" } | Select-Object -First 1
+          $fp = Get-ChildItem $dir -Recurse -Filter ffprobe.exe | Where-Object { $_.Directory.Name -eq "bin" } | Select-Object -First 1
+          if (-not $ff -or -not $fp) { throw "ffmpeg.exe/ffprobe.exe not found in bin/ of the essentials archive" }
+          # Point FFMPEG_BIN/FFPROBE_BIN at the real binaries so build_engine.py copies working executables.
           "FFMPEG_BIN=$($ff.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "FFPROBE_BIN=$($fp.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           $ff.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           & $ff.FullName -version | Select-Object -First 1
+          # Fail fast if this build lacks the encoders the app needs.
+          $encoders = (& $ff.FullName -hide_banner -encoders | Out-String)
+          foreach ($enc in @("libx264", "h264_nvenc")) {
+            if ($encoders -notmatch "\b$enc\b") { throw "ffmpeg build is missing required encoder: $enc" }
+          }
 
       - name: Run tests
         run: python -m pytest -q
@@ -47,9 +60,9 @@ jobs:
         run: python scripts/build_engine.py
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json
 
@@ -57,12 +70,30 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Build installer
+      # Code signing: electron-builder signs only when CSC_LINK and CSC_KEY_PASSWORD are set.
+      # Signing happens only when these repository secrets exist (a code-signing certificate
+      # must be bought by the owner). An empty value is ignored by electron-builder, so the
+      # build stays unsigned when the secrets are missing.
+
+      - name: Build and publish installer (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npm run build && npx electron-builder --win --publish always
+
+      - name: Build installer (no publish)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: app
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: npm run dist
 
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: video-duplicate-manager-windows
           path: app/release/*.exe

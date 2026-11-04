@@ -12,6 +12,13 @@ Things learned while building this repo (2026-11-05) that the code alone doesn't
 - **Some `.ts` files are really headless fragmented MP4.** A scan of `D:\new-3` reported 25 of 378 `.ts` files as `unreadable` with `mov,mp4…: trun track id unknown, no tfhd was found … error reading header`. The bytes start straight with `moof`/`mdat` pairs; there is no `ftyp`/`moov` init segment. This is typical of an HLS/CMAF (fMP4) download that dropped the `#EXT-X-MAP` init segment and saved the media under a `.ts` name. Without `moov` there is no codec config (avcC/SPS/PPS) or track timescale, so neither ffmpeg nor players can decode them. **This is not an engine bug.** `unreadable` is correct, and the files can't be repaired without the original init segment. Possible improvement: detect "starts with `moof`" and show a clear reason ("fragmented MP4 without init segment") instead of the raw ffmpeg error. Check quickly by reading the first 8 bytes: bytes 4–8 = `moof` or `styp` means headless fMP4.
 - **Combining the 3 frame grabs into one ffmpeg call** (`-ss t -i f` ×3 with 3 `-map … -f image2pipe -`) gave a stdout that couldn't be split back into images. Unresolved. If retried, write to 3 named outputs or use a filter graph with `select`, not one shared pipe.
 
+## Detection quality (measured on the owner's library: 3,319 files)
+
+- Pair distances (max over the 3 sample frames, same-length pairs): true matches 0–10, then a thin grey zone 12–22 (10 pairs), random pairs 24–50 (~120k pairs). pHash with a median threshold always sets exactly 32 bits, so distances are even.
+- No random pair had **2 of 3** frames within 10. 13 pairs had 2 close frames and one far one (e.g. `{0: 0, 1: 0, 2: 24}`): a different sample frame, not a different video. → The rule changed from "all shared frames ≤ 10" to "≥ `min_frames` (2) shared frames ≤ 10". Result: 71 → 84 groups, 152 → 166 GB. `max_distance` stays 10.
+- Trimmed copies (different length) are still not found: durations must agree within 1%. Finding them needs hashes every few seconds plus sequence alignment, which means decoding much more of every file. Parked; not worth the scan-time cost without a real case.
+- Thousands of same-length files used to make the duration window O(n²) in Python. Multi-index hashing was considered, but with distance 10 its chunks are ~6 bits, so it yields *more* candidates than the duration window. → numpy `bitwise_count` over the whole window per file: 5,000 same-length files in 0.3 s, real library in 33 ms.
+
 ## Storage / paths
 
 - **pHash overflowed SQLite.** The hash is unsigned 64-bit; SQLite INTEGER is signed. → `db.u64_to_db` / `db.u64_from_db` everywhere.
@@ -36,18 +43,22 @@ Things learned while building this repo (2026-11-05) that the code alone doesn't
 - Vite config is `vite.config.mts`, because the package is CJS (the built main uses `require`/`__dirname`).
 - npm 12 blocks the `electron-winstaller` install script. That only matters for Squirrel builds, not NSIS.
 - Main-process and preload changes need an app restart. **Before killing the app, check whether it is running an engine command** (look for `python.exe … engine` processes whose db path is under `AppData\Roaming`). Restarting mid-scan kills it.
+- `<video>` from a custom scheme needs `stream: true` in `registerSchemesAsPrivileged`, and seeking needs real `Range` handling (206 + `Content-Range`). `serveMedia` streams with `fs.createReadStream({start, end})`.
 - Live test without touching the owner's data: `electron . --remote-debugging-port=9333 --user-data-dir=<scratch>`, then drive `window.api` over CDP (`/json` → `Runtime.evaluate`, `Page.captureScreenshot`).
 
 ## Packaging / Docker
 
 - PyInstaller bundled **torch** from the dev venv (scipy optionally imports it), which made the engine 488 MB instead of 143 MB. → `--exclude-module torch/torchvision/torchaudio`. Better still, recreate the venv without torch.
 - `ffmpeg` on PATH here is a **scoop shim** (136 KB). `build_engine.py` follows the `.shim` file to the real binary before copying it.
-- The bundled full ffmpeg build is 148 MB of the 254 MB installer. A slimmer build is the cheapest size win.
+- The bundled full ffmpeg build is 148 MB of the 254 MB installer. → CI now bundles the gyan.dev essentials build (still has libx264 + h264_nvenc; the job checks this).
+- ImageHash pulled scipy (109 MB) + PyWavelets into the engine. → numpy pHash (`C[:8] @ X @ C[:8].T` with an unnormalised DCT-II matrix). Gotcha: on synthetic gradients scipy's DCT returns exact 0.0 coefficients, the matrix product ~3e-13, and the strict `> median` flipped up to 24 bits. → compare against `median + 1e-9·max|coef|`. Real frames: 1,500/1,500 identical. Frozen engine 143 → 56 MB.
 - Docker: apt `ffmpeg` is about 457 MB of shared libs. → `COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /ffprobe /usr/local/bin/`. The image went from 1.12 GB to 871 MB, and from 2.19 GB with the old torch image. scipy (via ImageHash) is another 109 MB.
 - `${VAR:?msg}` in docker-compose also breaks `docker compose build`.
 - Git Bash rewrites `/videos` into a Windows path. → `MSYS_NO_PATHCONV=1 docker compose run …`.
 - Docker Desktop isn't started automatically; it lives at `%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe`.
-- GitHub Actions warns that Node 20 is deprecated for `actions/*@v4/v5`. Bump them when convenient.
+- GitHub Actions: Node 20 was deprecated → actions bumped to @v7, Node 24.
+- Root `.gitignore` has a bare `build` line, which also ignored `app/build/` (electron-builder's icon folder). → `!app/build/`.
+- electron-builder treats an empty `CSC_LINK` as "no certificate", so passing missing secrets is safe.
 
 ## Repo / tooling
 

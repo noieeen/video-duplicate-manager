@@ -32,6 +32,8 @@ export interface BatchInfo {
   moved: number;
   restored: number;
   failed: number;
+  trashed: number;
+  bytes: number;
 }
 
 export interface ScanStats {
@@ -62,7 +64,7 @@ export type EngineEvent =
   | { type: "groups"; scan_id: number | null; groups: Group[] }
   | { type: "ok"; confirmed?: number }
   | { type: "skip"; [key: string]: unknown }
-  | { type: "apply_done"; batch_id: string; moved: number; failed: number }
+  | { type: "apply_done"; batch_id: string; moved: number; failed: number; bytes: number; mode: "move" | "trash" }
   | { type: "undo_done"; batch_id: string; restored: number; failed: number }
   | { type: "history"; batches: BatchInfo[] }
   | { type: "files"; paths: string[] }
@@ -80,6 +82,8 @@ export interface Settings {
   dupRoot: string;
   /** Scan threads per drive (engine `--workers`). 4 suits a SATA HDD; SSDs can take 6-8. */
   workers: number;
+  /** Glob patterns (file or folder name, or full path; case-insensitive) that scans skip. Sent as `scan --exclude`. */
+  excludes: string[];
 }
 
 export interface RunResult {
@@ -100,5 +104,7 @@ export interface Api {
   openPath(p: string): Promise<string>;
   showInFolder(p: string): Promise<void>;
   fileUrl(p: string): string;
+  /** media://local/<encoded path>: a video file URL for <video>, served with Range support. */
+  mediaUrl(p: string): string;
   pathForFile(file: File): string;
 }

@@ -1,26 +1,7 @@
-"""Group videos whose sampled frame hashes match (union-find over a duration-sorted sweep)."""
+"""Group videos whose sampled frame hashes match (vectorised pairwise check over a duration-sorted sweep, union-find)."""
 from __future__ import annotations
 
-
-def _hamming(a: int, b: int) -> int:
-    return bin(a ^ b).count("1")
-
-
-def _matches(
-    a: tuple[int, float, dict[int, int]],
-    b: tuple[int, float, dict[int, int]],
-    max_distance: int,
-    min_frames: int,
-    duration_tol: float,
-) -> bool:
-    _, da, ha = a
-    _, db, hb = b
-    if abs(da - db) > max(duration_tol, 0.01 * max(da, db)):
-        return False
-    shared = ha.keys() & hb.keys()
-    if len(shared) < min_frames:
-        return False
-    return all(_hamming(ha[i], hb[i]) <= max_distance for i in shared)
+import numpy as np
 
 
 def find_groups(
@@ -29,9 +10,24 @@ def find_groups(
     min_frames: int = 2,
     duration_tol: float = 1.0,
 ) -> list[list[int]]:
-    """items: (file_id, duration, {frame_idx: hash}). Returns groups of file_ids (size >= 2)."""
+    """items: (file_id, duration, {frame_idx: hash}). Returns groups of file_ids (size >= 2).
+
+    Two items match when their durations are within the window and at least `min_frames`
+    shared frame indices have hamming distance <= max_distance.
+    """
+    if min_frames < 1:
+        raise ValueError("min_frames must be >= 1")
     order = sorted(items, key=lambda it: it[1])
     n = len(order)
+    durations = [it[1] for it in order]
+    k_count = max((k for _, _, h in order for k in h), default=-1) + 1
+    hashes = np.zeros((n, k_count), dtype=np.uint64)
+    present = np.zeros((n, k_count), dtype=bool)
+    for r, (_, _, h) in enumerate(order):
+        for k, v in h.items():
+            hashes[r, k] = v
+            present[r, k] = True
+
     parent = list(range(n))
 
     def find(x: int) -> int:
@@ -40,17 +36,21 @@ def find_groups(
             x = parent[x]
         return x
 
+    hi = 0
     for i in range(n):
-        di = order[i][1]
-        for j in range(i + 1, n):
-            dj = order[j][1]
-            # Sorted by duration, so once the window is exceeded no later j can match.
-            if dj - di > max(duration_tol, 0.01 * dj):
-                break
-            ri, rj = find(i), find(j)
-            if ri == rj:
-                continue
-            if _matches(order[i], order[j], max_distance, min_frames, duration_tol):
+        di = durations[i]
+        hi = max(hi, i + 1)
+        # Duration window: j is in-window while dj - di <= max(tol, 0.01 * dj). That predicate is
+        # monotone in dj and only loosens as i grows, so `hi` never moves backwards.
+        while hi < n and durations[hi] - di <= max(duration_tol, 0.01 * durations[hi]):
+            hi += 1
+        if hi == i + 1:
+            continue
+        close = np.bitwise_count(hashes[i] ^ hashes[i + 1 : hi]).astype(np.int32) <= max_distance
+        close &= present[i] & present[i + 1 : hi]
+        for off in np.nonzero(close.sum(axis=1) >= min_frames)[0]:
+            ri, rj = find(i), find(i + 1 + int(off))
+            if ri != rj:
                 parent[rj] = ri
 
     components: dict[int, list[int]] = {}

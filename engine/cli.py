@@ -42,6 +42,8 @@ def _parser() -> argparse.ArgumentParser:
                    help="files analysed in parallel per drive (default: %(default)s)")
     s.add_argument("--fresh", action="store_true",
                    help="ignore the scan cache: re-read and re-fingerprint every file")
+    s.add_argument("--exclude", action="append", default=None, metavar="PATTERN",
+                   help="skip paths matching PATTERN (repeatable)")
 
     g = sub.add_parser("groups", help="list duplicate groups of a scan")
     g.add_argument("--scan", type=int, help="scan id (default: latest done scan)")
@@ -61,8 +63,10 @@ def _parser() -> argparse.ArgumentParser:
     d = sub.add_parser("dismiss", help="dismiss a group")
     d.add_argument("--group", type=int, required=True)
 
-    a = sub.add_parser("apply", help="move duplicates of confirmed groups into a folder")
-    a.add_argument("--dup-root", required=True, metavar="DIR")
+    a = sub.add_parser("apply", help="move duplicates of confirmed groups into a folder, or to the Recycle Bin")
+    a.add_argument("--dup-root", metavar="DIR", help="folder to move duplicates into (required unless --trash)")
+    a.add_argument("--trash", action="store_true",
+                   help="send duplicates to the Recycle Bin instead of moving them (ignores --dup-root)")
     a.add_argument("--group", type=int, action="append",
                    help="group id (repeatable; default: all confirmed groups)")
 
@@ -96,7 +100,8 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
     if cmd == "scan":
         thumbs = args.thumbs or os.path.join(os.path.dirname(os.path.abspath(args.db)), "thumbs")
         settings = {"max_distance": args.max_distance, "min_frames": args.min_frames,
-                    "workers": args.workers, "fresh": args.fresh}
+                    "workers": args.workers, "fresh": args.fresh,
+                    "exclude": list(args.exclude or [])}
         run_scan(conn, args.root, emit, settings=settings, thumbs_dir=thumbs)
     elif cmd == "clear-cache":
         thumbs = args.thumbs or os.path.join(os.path.dirname(os.path.abspath(args.db)), "thumbs")
@@ -118,7 +123,7 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
         set_group_status(conn, args.group, "dismissed")
         emit("ok")
     elif cmd == "apply":
-        apply_groups(conn, args.group, args.dup_root, emit)
+        apply_groups(conn, args.group, args.dup_root, emit, trash=args.trash)
     elif cmd == "undo":
         undo_batch(conn, args.batch, emit)
     elif cmd == "history":
@@ -152,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "files" and not args.root and args.ext is None:
         parser.error("the following arguments are required: --ext")
+    if args.command == "apply" and not args.trash and not args.dup_root:
+        parser.error("the following arguments are required: --dup-root (or --trash)")
     _force_utf8_stdout()
     emit = Emitter(human=args.human).emit
     conn = None

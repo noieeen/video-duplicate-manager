@@ -384,3 +384,85 @@ button.danger {
 .text-danger {
   color: var(--danger);
 }
+
+/* ---- Review tab: keyboard selection, paging, compare modal ---- */
+
+.review-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.group.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.compare-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.compare-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  width: min(1200px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compare-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.compare-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compare-pick {
+  width: 100%;
+  min-width: 0;
+}
+
+.compare-video,
+.compare-fallback {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.compare-video {
+  background: #000;
+}
+
+.compare-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg);
+  color: var(--muted);
+  text-align: center;
+  padding: 12px;
+}
+
+.compare-fallback p {
+  margin: 0;
+}

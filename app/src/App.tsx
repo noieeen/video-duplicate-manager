@@ -76,6 +76,7 @@ export default function App() {
                 roots={settings.roots}
                 workers={settings.workers}
                 onWorkersChange={(workers) => updateSettings({ ...settings, workers })}
+                excludes={settings.excludes}
                 report={report}
               />
             </section>

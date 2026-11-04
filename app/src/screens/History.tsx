@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { engineError, findEvent, runCli } from "../engine";
-import { fmtDate } from "../format";
+import { fmtDate, fmtGB } from "../format";
 import type { BatchInfo } from "../types";
 
 interface Props {
   active: boolean;
   report: (msg: string) => void;
+}
+
+// A batch whose files all went to the Recycle Bin: the engine cannot undo it.
+function trashOnly(b: BatchInfo): boolean {
+  return b.trashed > 0 && b.moved === 0;
 }
 
 export default function History({ active, report }: Props) {
@@ -67,6 +72,7 @@ export default function History({ active, report }: Props) {
               <th>Moved</th>
               <th>Restored</th>
               <th>Failed</th>
+              <th>Freed</th>
               <th />
             </tr>
           </thead>
@@ -77,13 +83,23 @@ export default function History({ active, report }: Props) {
                 <td className="mono" title={b.batch_id}>
                   {b.batch_id.slice(0, 8)}
                 </td>
-                <td>{b.moved}</td>
+                <td>
+                  {b.moved}
+                  {b.trashed > 0 && <div className="muted">{b.trashed} in Recycle Bin</div>}
+                </td>
                 <td>{b.restored}</td>
                 <td>{b.failed}</td>
+                <td>{fmtGB(b.bytes)}</td>
                 <td>
-                  <button disabled={busy || b.moved <= b.restored} onClick={() => void undo(b)}>
-                    Undo
-                  </button>
+                  {trashOnly(b) ? (
+                    <button disabled title="Files are in the Recycle Bin; restore them from there">
+                      Undo
+                    </button>
+                  ) : (
+                    <button disabled={busy || b.moved <= b.restored} onClick={() => void undo(b)}>
+                      Undo
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

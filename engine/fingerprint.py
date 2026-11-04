@@ -8,13 +8,20 @@ from __future__ import annotations
 import io
 import subprocess
 
-import imagehash
 import numpy as np
 from PIL import Image
 
 from engine import tools
 
 SAMPLE_FRACTIONS = (0.1, 0.5, 0.9)
+
+# pHash parameters (same as imagehash.phash defaults: hash_size=8, highfreq_factor=4).
+_PHASH_SIZE = 32
+_PHASH_LOW = 8
+# Unnormalised DCT-II basis: _DCT[k, n] = 2 * cos(pi * k * (2n + 1) / (2N)), restricted to the low-frequency rows.
+_DCT = 2 * np.cos(
+    np.pi * np.arange(_PHASH_LOW)[:, None] * (2 * np.arange(_PHASH_SIZE) + 1)[None, :] / (2 * _PHASH_SIZE)
+)
 
 
 def sample_times(duration: float) -> list[float]:
@@ -52,7 +59,16 @@ def is_uniform(img: Image.Image, min_std: float = 8.0) -> bool:
 
 
 def _phash(img: Image.Image) -> int:
-    return int(str(imagehash.phash(img)), 16)
+    """64-bit pHash, bit-identical to ``int(str(imagehash.phash(img)), 16)``."""
+    gray = img.convert("L").resize((_PHASH_SIZE, _PHASH_SIZE), Image.Resampling.LANCZOS)
+    pixels = np.asarray(gray, dtype=np.float64)
+    low = _DCT @ pixels @ _DCT.T
+    # Coefficients that are mathematically equal to the median (e.g. exact zeros on smooth gradients)
+    # come out of the matrix product with float noise; treat that noise as a tie, as scipy's DCT does.
+    med = np.median(low)
+    tol = 1e-9 * max(1.0, float(np.abs(low).max()))
+    bits = (low > med + tol).ravel()
+    return int.from_bytes(np.packbits(bits).tobytes(), "big")
 
 
 def hamming(a: int, b: int) -> int:

@@ -1,4 +1,4 @@
 # Engine runtime (python -m engine). ffmpeg/ffprobe must be on PATH or set via FFMPEG_BIN / FFPROBE_BIN.
 numpy==2.2.4
 pillow==11.2.1
-ImageHash==4.3.2
+send2trash==2.1.0
