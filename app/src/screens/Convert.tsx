@@ -7,8 +7,9 @@ interface Props {
   report: (msg: string) => void;
 }
 
-type Mode = "copy" | "reencode";
+type Mode = "copy" | "reencode" | "shrink";
 type Encoder = "auto" | "nvenc" | "x264";
+type Speed = "quality" | "fast";
 type OutMode = "source" | "folder";
 
 // Drops are filtered to these; the file picker has the same list in electron/main.ts.
@@ -21,6 +22,8 @@ interface Row {
   sizeIn?: number;
   sizeOut?: number;
   encoder?: string;
+  speed?: string | null;
+  mode?: string;
   // Only for converted rows when "move original to Recycle Bin" was ticked. Error text lives in message.
   trash?: "pending" | "recycled" | "failed";
   message?: string;
@@ -34,10 +37,17 @@ function extOf(p: string): string {
   return /\.([^.\\/]+)$/.exec(p)?.[1]?.toLowerCase() ?? "";
 }
 
+// "saved 12.3 MB (45%)" for a converted file that got smaller. Caller guards sizeIn > 0.
+function savedLabel(sizeIn: number, sizeOut: number): string {
+  const pct = Math.round((1 - sizeOut / sizeIn) * 100);
+  return `saved ${fmtMB(sizeIn - sizeOut)} (${pct}%)`;
+}
+
 export default function Convert({ report }: Props) {
   const [files, setFiles] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("copy");
   const [encoder, setEncoder] = useState<Encoder>("auto");
+  const [speed, setSpeed] = useState<Speed>("quality");
   const [outMode, setOutMode] = useState<OutMode>("source");
   const [outDir, setOutDir] = useState("");
   const [trashAfter, setTrashAfter] = useState(false);
@@ -80,6 +90,8 @@ export default function Convert({ report }: Props) {
               sizeIn: ev.size_in,
               sizeOut: ev.size_out,
               encoder: ev.encoder,
+              speed: ev.speed,
+              mode: ev.mode,
               trash: trash ? "pending" : undefined,
             },
           ]);
@@ -202,7 +214,8 @@ export default function Convert({ report }: Props) {
     setCurrent(null);
 
     const args = ["convert", ...files.flatMap((p) => ["--input", p]), "--mode", mode];
-    if (mode === "reencode") args.push("--encoder", encoder);
+    if (mode === "reencode") args.push("--encoder", encoder, "--speed", speed);
+    if (mode === "shrink") args.push("--speed", speed);
     if (outMode === "folder") args.push("--out-dir", outDir);
 
     const res = await runCli(args);
@@ -234,6 +247,14 @@ export default function Convert({ report }: Props) {
     void window.api.cancel();
   }
 
+  const savedRows = rows.filter((r) => r.status === "converted" && r.sizeIn !== undefined && r.sizeOut !== undefined);
+  const savedBytes = savedRows.reduce((sum, r) => sum + (r.sizeIn ?? 0) - (r.sizeOut ?? 0), 0);
+  const savedSummary =
+    savedRows.length === 0
+      ? null
+      : savedBytes >= 0
+        ? `Saved ${fmtMB(savedBytes)} in total across ${savedRows.length} file(s).`
+        : `Output is ${fmtMB(-savedBytes)} larger in total across ${savedRows.length} file(s).`;
   const outMissing = outMode === "folder" && outDir === "";
   const canConvert = !running && files.length > 0 && !outMissing;
   const pct = overall ? fmtPercent(overall.done, overall.total) : 0;
@@ -313,6 +334,22 @@ export default function Convert({ report }: Props) {
             />
             Re-encode
           </label>
+          <label className="row">
+            <input
+              type="radio"
+              name="convert-mode"
+              checked={mode === "shrink"}
+              disabled={running}
+              onChange={() => setMode("shrink")}
+            />
+            Shrink (AV1, max 1080p / 60 fps)
+          </label>
+          {mode === "shrink" && (
+            <p className="muted">
+              Re-encodes to AV1 to save space. Keeps the new file only if it is at least 15% smaller. Uses the NVIDIA GPU
+              when available (much slower on CPU). Output: name_av1.mp4.
+            </p>
+          )}
           {mode === "reencode" && (
             <label className="row">
               Encoder
@@ -324,6 +361,15 @@ export default function Convert({ report }: Props) {
                 <option value="auto">Auto</option>
                 <option value="nvenc">NVIDIA GPU (nvenc)</option>
                 <option value="x264">CPU (x264)</option>
+              </select>
+            </label>
+          )}
+          {(mode === "reencode" || mode === "shrink") && (
+            <label className="row">
+              Speed
+              <select value={speed} disabled={running} onChange={(e) => setSpeed(e.target.value as Speed)}>
+                <option value="quality">Quality (slower, smaller)</option>
+                <option value="fast">Fast (about 2.5x faster with NVENC, ~10% larger)</option>
               </select>
             </label>
           )}
@@ -408,6 +454,7 @@ export default function Convert({ report }: Props) {
       )}
 
       {summary && <p>{summary}</p>}
+      {!running && savedSummary && <p>{savedSummary}</p>}
 
       {rows.length > 0 && (
         <table className="table">
@@ -430,7 +477,7 @@ export default function Convert({ report }: Props) {
                   {r.output ? baseName(r.output) : "-"}
                 </td>
                 <td>{r.sizeIn !== undefined && r.sizeOut !== undefined ? `${fmtMB(r.sizeIn)} → ${fmtMB(r.sizeOut)}` : "-"}</td>
-                <td>{r.encoder ?? "-"}</td>
+                <td>{r.encoder ? (r.speed ? `${r.encoder} · ${r.speed}` : r.encoder) : "-"}</td>
                 <td>
                   {r.status === "converted" && r.trash === "pending" && "Converted, moving original to Recycle Bin..."}
                   {r.status === "converted" && r.trash === "recycled" && "Converted, original Recycled"}
@@ -440,6 +487,11 @@ export default function Convert({ report }: Props) {
                   {r.status === "converted" && r.trash === undefined && "Converted"}
                   {r.status === "error" && <span className="text-danger">Failed: {r.message}</span>}
                   {r.status === "skipped" && <span className="muted">Skipped: {r.message}</span>}
+                  {r.status === "converted" &&
+                    r.mode === "shrink" &&
+                    r.sizeIn !== undefined &&
+                    r.sizeOut !== undefined &&
+                    r.sizeIn > 0 && <span className="muted"> · {savedLabel(r.sizeIn, r.sizeOut)}</span>}
                 </td>
               </tr>
             ))}

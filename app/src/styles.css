@@ -466,3 +466,189 @@ button.danger {
 .compare-fallback p {
   margin: 0;
 }
+
+/* ---- Space tab: library donut, legend, file list ---- */
+
+/* Series colors for the donut slices, in group order. Validated for colorblind separation on the panel colors: do not reorder. */
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+  }
+}
+
+.space-overview {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .space-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+.space-donut {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  justify-self: center;
+}
+
+.space-donut svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.space-slice {
+  cursor: pointer;
+  transform-origin: 120px 120px;
+  transition: transform 0.12s ease;
+}
+
+.space-slice.is-hover {
+  transform: scale(1.03);
+}
+
+.space-center-total {
+  fill: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.space-center-files {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.space-tip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.space-tip-label {
+  font-weight: 600;
+}
+
+.space-legend-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.space-legend-table th,
+.space-legend-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.space-legend-table tbody tr {
+  cursor: pointer;
+}
+
+.space-legend-table tbody tr:hover td {
+  background: var(--bg);
+}
+
+.space-legend-table tr.is-selected td {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.space-legend-table .num,
+.space-files-table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.space-row-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.space-swatch {
+  display: inline-block;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.space-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.space-files-scroll {
+  overflow-x: auto;
+}
+
+.space-files-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.space-files-table th,
+.space-files-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.space-files-table td.space-path {
+  width: 100%;
+  max-width: 0;
+}
+
+.space-path-link {
+  display: block;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.space-path-link:hover {
+  text-decoration: underline;
+}
+
+.space-unreadable {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.space-more {
+  margin-top: 12px;
+}

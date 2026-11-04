@@ -118,6 +118,14 @@ Review at scale: groups sorted by space saved (sum of duplicate sizes; or newest
 
 ## Convert to MP4 (`convert.py`, CLI `convert`, app tab **Convert**)
 
+**Speed** (`convert --speed quality|fast`, default `quality`; re-encode only, ignored in copy mode): nvenc quality = `-preset p5 -cq 23`, nvenc fast = `-preset p1 -cq 23` (measured 2.5x faster, ~9% larger, same SSIM); x264 quality = `-preset medium -crf 20`, x264 fast = `-preset veryfast -crf 20`. The `converted` event carries `speed` (`null` in copy mode). Parallel convert workers and `-hwaccel cuda` were measured and rejected: the single NVENC engine is the bottleneck (see LESSONS.md). Space-saving research: `docs/SPACE_SAVING.md`.
+
+**Shrink** (`convert --mode shrink`, `--speed` applies, `--encoder` ignored): AV1 via `av1_nvenc` (if a 1-frame test encode works) else `libsvtav1`; result `encoder` = `av1_nvenc|svtav1`. Short side capped at 1080 (`scale=-2:1080` landscape/square, `scale=1080:-2` portrait; never upscales; aspect ratio from the source) and fps at 60 (`fps=60` only when the source is above 60.5). Audio AAC 128k, `-map_metadata 0`. Output `<stem>_av1.mp4` (`.mp4` inputs accepted). Pre-skips (`skip {path, reason}`, counted as skipped): HDR sources; HEVC/AV1 already within 1080p/60. **Keep rule:** after the duration check the output is kept only if it is ≤ `KEEP_RATIO` (0.85) of the source size, otherwise it is deleted and skipped with `not smaller: output was N% …`. `probe()` also returns `fps` (avg_frame_rate, fallback r_frame_rate, or None) and `hdr` (transfer smpte2084/arib-std-b67).
+
+## Library breakdown (`library.py`, CLI `library`, app tab **Space**)
+
+`library [--root DIR …] [--group-by potential|resolution|codec|folder]` → `library {group_by, total_files, total_bytes, groups:[{key, label, files, bytes}]}`; with `--group KEY [--limit 200] [--offset 0]` → `library_files {group_by, key, total, files:[{file_id, path, size, width, height, codec, bit_rate, duration, status}]}` (largest first). Files: status `ok`/`unreadable` under the given roots (realpath + normcase prefix). Buckets: **potential** = Above 1080p (short side) → Already HEVC/AV1/VP9 → H.264/older over 4 Mb/s → 4 Mb/s or less, plus Unreadable (checked first); **resolution** by short side (480p or less, 720p, 1080p, 1440p, 4K and above, Unknown, Unreadable); **codec** and **folder** (scan root) = top 5 by bytes + Other. App: donut (≤ 6 slots, palette validated for CVD on the app's panels) + legend table (the text view), click a slice/row to list its files with a path link and a Show in folder button.
+
 Purpose: turn playable non-MP4 videos (mainly MPEG-TS `.ts`) into `.mp4`. The engine never deletes or overwrites; the
 app may move a source to the Recycle Bin after a verified success, only when the user ticks that option.
 

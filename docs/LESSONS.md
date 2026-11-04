@@ -19,6 +19,18 @@ Things learned while building this repo (2026-11-05) that the code alone doesn't
 - Trimmed copies (different length) are still not found: durations must agree within 1%. Finding them needs hashes every few seconds plus sequence alignment, which means decoding much more of every file. Parked; not worth the scan-time cost without a real case.
 - Thousands of same-length files used to make the duration window O(n²) in Python. Multi-index hashing was considered, but with distance 10 its chunks are ~6 bits, so it yields *more* candidates than the duration window. → numpy `bitwise_count` over the whole window per file: 5,000 same-length files in 0.3 s, real library in 33 ms.
 
+## Convert (measured: RTX 4070, driver 610.88, 1080p H.264 5 Mb/s .ts, 60 s segments, warm cache)
+
+- NVENC re-encode is bound by the **single NVENC engine**, not by decode or CPU. Total throughput stays flat however it runs: preset p5 gives 11.7x realtime with 1 file, 12.0x with 2, 12.0x with 4. `-hwaccel cuda -hwaccel_output_format cuda` gives 11.7x, the same. → Parallel convert workers and GPU decode were **not** added; they would be complexity for ~3%.
+- GPU decode alone (29x) is *slower* than CPU decode alone (53x) on this CPU.
+- The real lever is the preset. At `-cq 23`, p1 runs at 28.9x (SSIM 0.9920, +9% size), p4 at 16.3x (SSIM 0.9914, +1% size), and p5 at 11.7x (SSIM 0.9922).
+- Re-encoding this source at `-cq 23` made the file **1.6x bigger** (60 MB vs 38 MB per minute). For .ts → .mp4, Copy (remux) is the right default; re-encode only to fix broken streams or codecs.
+- Copy mode is disk-bound: parallel only helps across different physical drives.
+- Shrink on the same real clip: AV1 NVENC cq36 p5 → 63% of the source in 6.6 s per minute of video (SSIM 0.987); p1 → 57% in 3.5 s (SSIM 0.986). At the same `-cq`, p1 came out *smaller* than p5 (slightly lower quality), so "Fast" is not a size penalty for AV1 the way it is for H.264.
+- The research agent's standard scale filter `scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease` "fits in 1920x1080", which shrinks a 1080x1920 portrait clip to 608x1080. The owner's 1080p cap means short side ≤ 1080 → choose `scale=-2:1080` or `scale=1080:-2` from the orientation.
+- libx264 in this ffmpeg build silently drops `-color_trc`; to tag a test clip as HDR use `-x264-params colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc`.
+- Keep-rule tests need a noisy source (testsrc2 + noise): clean synthetic clips compress so well that any encode passes the 85% rule, which hides bugs.
+
 ## Storage / paths
 
 - **pHash overflowed SQLite.** The hash is unsigned 64-bit; SQLite INTEGER is signed. → `db.u64_to_db` / `db.u64_from_db` everywhere.

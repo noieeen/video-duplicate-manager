@@ -22,6 +22,7 @@ Non-obvious points:
 - pHash is a numpy re-implementation of `imagehash.phash` (bit-identical on 1,500 real frames), so ImageHash/scipy are dev-only (parity test). Don't reintroduce them at runtime.
 - `apply._send_to_trash` must be monkeypatched in tests; the real one fills the owner's Recycle Bin.
 - Review's Compare player loads videos via `media://local/<encoded path>` (`serveMedia` in main.ts, HTTP Range). The scheme needs `stream: true`. Chromium can't play MPEG-TS/most HEVC, so those fall back to "Open in player".
+- Convert: the RTX 4070's single NVENC engine is the bottleneck, so parallel workers and GPU decode don't help (measured). The speed lever is the preset (`--speed fast` = p1). H.264→H.264 re-encode can make files bigger. Space-saving findings are in `docs/SPACE_SAVING.md`. Convert mode **Shrink** = AV1 (av1_nvenc, else svtav1), short side ≤ 1080, fps ≤ 60, and keeps the output only if ≤ 85% of the source; tests monkeypatch `convert._av1_encoder` to `svtav1` so they never need a GPU. The **Space** tab reads `library` (engine/library.py).
 - pHash values are unsigned 64-bit but SQLite is signed. Always use `db.u64_to_db` / `db.u64_from_db`.
 - Paths are stored via `os.path.realpath`, which keeps the on-disk casing so moved files keep their names. Case-insensitive comparisons use `normcase` on top of that.
 - A re-scan reuses rows whose `(size, mtime)` are unchanged (`cached` in stats). It doesn't re-probe them.

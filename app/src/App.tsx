@@ -5,13 +5,15 @@ import Review from "./screens/Review";
 import Apply from "./screens/Apply";
 import History from "./screens/History";
 import Convert from "./screens/Convert";
+import Space from "./screens/Space";
 import type { Settings } from "./types";
 
-type Tab = "folders" | "scan" | "review" | "apply" | "history" | "convert";
+type Tab = "folders" | "scan" | "space" | "review" | "apply" | "history" | "convert";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "folders", label: "Folders" },
   { id: "scan", label: "Scan" },
+  { id: "space", label: "Space" },
   { id: "review", label: "Review" },
   { id: "apply", label: "Apply" },
   { id: "history", label: "History" },
@@ -79,6 +81,9 @@ export default function App() {
                 excludes={settings.excludes}
                 report={report}
               />
+            </section>
+            <section {...show("space")}>
+              <Space active={tab === "space"} roots={settings.roots} report={report} />
             </section>
             <section {...show("review")}>
               <Review active={tab === "review"} report={report} />

@@ -49,9 +49,32 @@ export interface ConvertResult {
   output: string;
   mode: string;
   encoder: string;
+  /** Speed used for a re-encode ("quality" | "fast"); null in copy mode. */
+  speed: string | null;
   seconds: number;
   size_in: number;
   size_out: number;
+}
+
+/** One slice of the Space tab donut (engine `library` event). */
+export interface LibraryGroup {
+  key: string;
+  label: string;
+  files: number;
+  bytes: number;
+}
+
+/** One file row in the Space tab file list (engine `library_files` event). */
+export interface LibraryFile {
+  file_id: number;
+  path: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  codec: string | null;
+  bit_rate: number | null;
+  duration: number | null;
+  status: string;
 }
 
 export type EngineEvent =
@@ -72,6 +95,8 @@ export type EngineEvent =
   | { type: "convert_started"; total: number; mode: string }
   | ({ type: "converted" } & ConvertResult)
   | { type: "convert_done"; converted: number; failed: number; skipped: number; outputs: string[] }
+  | { type: "library"; group_by: string; total_files: number; total_bytes: number; groups: LibraryGroup[] }
+  | { type: "library_files"; group_by: string; key: string; total: number; files: LibraryFile[] }
   | { type: "error"; message: string }
   // Added by the app's main process, not by the engine:
   | { type: "log"; line: string }

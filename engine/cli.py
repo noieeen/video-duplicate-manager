@@ -11,8 +11,9 @@ import sys
 
 from engine import db
 from engine.apply import apply_groups, undo_batch
-from engine.convert import ENCODERS, MODES, ok_files_with_ext, run_convert, video_files_under
+from engine.convert import ENCODERS, MODES, SPEEDS, ok_files_with_ext, run_convert, video_files_under
 from engine.events import Emitter
+from engine.library import GROUP_BYS, library_files, library_json
 from engine.maintenance import clear_cache
 from engine.queries import (
     GROUP_STATUSES,
@@ -75,6 +76,14 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("history", help="list apply batches")
 
+    lb = sub.add_parser("library", help="disk space of the library, grouped by potential, resolution, codec or folder")
+    lb.add_argument("--root", action="append", metavar="DIR",
+                    help="only files under this folder (repeatable)")
+    lb.add_argument("--group-by", choices=GROUP_BYS, default="potential")
+    lb.add_argument("--group", metavar="KEY", help="list the files of this group (largest first) instead")
+    lb.add_argument("--limit", type=int, default=200, help="files per page with --group (default: %(default)s)")
+    lb.add_argument("--offset", type=int, default=0, help="files to skip with --group (default: %(default)s)")
+
     cc = sub.add_parser("clear-cache", help="forget fingerprints, metadata and thumbnails (keeps History/Undo)")
     cc.add_argument("--thumbs", metavar="DIR", help="thumbnail folder (default: <db dir>/thumbs)")
 
@@ -91,6 +100,8 @@ def _parser() -> argparse.ArgumentParser:
                     help="copy = lossless remux (default); reencode = h264 + aac")
     cv.add_argument("--encoder", choices=ENCODERS, default="auto",
                     help="re-encode only: auto (GPU if available), nvenc, x264 (default: %(default)s)")
+    cv.add_argument("--speed", choices=SPEEDS, default="quality",
+                    help="re-encode only: quality (default) or fast (~2.5x faster with nvenc, ~10%% larger)")
     cv.add_argument("--out-dir", metavar="DIR", help="output folder (default: next to each source)")
     return p
 
@@ -128,6 +139,12 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
         undo_batch(conn, args.batch, emit)
     elif cmd == "history":
         emit("history", batches=history_json(conn))
+    elif cmd == "library":
+        if args.group is None:
+            emit("library", **library_json(conn, args.root, args.group_by))
+        else:
+            emit("library_files", **library_files(conn, args.root, args.group_by, args.group,
+                                                  args.limit, args.offset))
     elif cmd == "files":
         if args.root:
             emit("files", paths=video_files_under(args.root, args.ext))
@@ -139,7 +156,8 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
             inputs += ok_files_with_ext(conn, args.from_scan_ext)
         if not inputs:
             raise ValueError("no input files: pass --input FILE or --from-scan-ext EXT")
-        run_convert(conn, inputs, emit, mode=args.mode, encoder=args.encoder, out_dir=args.out_dir)
+        run_convert(conn, inputs, emit, mode=args.mode, encoder=args.encoder, out_dir=args.out_dir,
+                    speed=args.speed)
     else:  # unreachable: argparse enforces the choices
         raise ValueError(f"unknown command: {cmd}")
 

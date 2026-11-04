@@ -22,6 +22,15 @@ def _of(events, type):
     return [e for e in events if e["type"] == type]
 
 
+def test_cli_convert_rejects_unknown_speed(tmp_path):
+    db = tmp_path / "lib" / "library.db"
+    proc = subprocess.run(
+        [sys.executable, "-m", "engine", "--db", str(db), "convert", "--input", "x.ts", "--speed", "bogus"],
+        cwd=REPO, capture_output=True, timeout=600,
+    )
+    assert proc.returncode == 2
+
+
 def test_cli_round_trip(tmp_path, make_video):
     root = tmp_path / "root"
     root_a, root_b = root / "A", root / "B"
@@ -137,6 +146,57 @@ def test_scan_without_exclude_sends_empty_list(tmp_path):
     assert code == 0
 
     assert _settings(db)["exclude"] == []
+
+
+def _add_library_rows(db_path):
+    from engine import db as db_mod
+
+    conn = db_mod.connect(str(db_path))
+    rows = [
+        ("/v/big.mp4", 500, 2560, 1440, "h264", 8_000_000),
+        ("/v/low.mp4", 300, 1280, 720, "mpeg4", 2_000_000),
+        ("/v/hevc.mp4", 100, 1920, 1080, "hevc", 9_000_000),
+    ]
+    for path, size, w, h, codec, bit_rate in rows:
+        conn.execute(
+            "INSERT INTO files(path, root, size, mtime, width, height, codec, bit_rate, status) "
+            "VALUES (?,?,?,?,?,?,?,?,'ok')",
+            (path, "/v", size, 0.0, w, h, codec, bit_rate),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_cli_library_summary_and_group(tmp_path):
+    db = tmp_path / "lib" / "library.db"
+    _add_library_rows(db)
+
+    code, events = _run(db, "library")
+    assert code == 0
+    summary = _of(events, "library")
+    assert len(summary) == 1 and not _of(events, "library_files")
+    assert summary[0]["group_by"] == "potential"
+    assert summary[0]["total_files"] == 3
+    assert [g["key"] for g in summary[0]["groups"]] == ["above_1080p", "old_low", "efficient"]
+
+    code, events = _run(db, "library", "--group", "old_low", "--limit", "1")
+    assert code == 0
+    listed = _of(events, "library_files")
+    assert len(listed) == 1 and not _of(events, "library")
+    assert listed[0]["key"] == "old_low"
+    assert listed[0]["total"] == 1
+    assert [f["path"] for f in listed[0]["files"]] == ["/v/low.mp4"]
+
+
+def test_cli_library_group_by_codec(tmp_path):
+    db = tmp_path / "lib" / "library.db"
+    _add_library_rows(db)
+
+    code, events = _run(db, "library", "--group-by", "codec")
+    assert code == 0
+    summary = _of(events, "library")[0]
+    assert summary["group_by"] == "codec"
+    assert [g["key"] for g in summary["groups"]] == ["h264", "mpeg4", "hevc"]
 
 
 def _settings(db):
