@@ -2,12 +2,16 @@
 
 Never moves or deletes video files. Contract: docs/ENGINE_SPEC.md, section "Scan".
 `emit` is a callable `emit(type, **data)` (the CLI passes `Emitter(...).emit`).
+
+Per-file analysis (probe, fingerprint, thumbnail resize) runs in worker threads and never
+touches the database. Every sqlite call happens on the thread that called run_scan.
 """
 from __future__ import annotations
 
 import json
 import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from PIL import Image
@@ -20,7 +24,7 @@ from engine.scoring import pick_keeper, score
 
 VIDEO_EXTS = {".mp4", ".ts", ".mkv", ".avi", ".mov", ".m4v", ".wmv", ".webm", ".flv"}
 METHOD = "phash"
-DEFAULT_SETTINGS = {"max_distance": 10, "min_frames": 2, "duration_tol": 1.0, "method": METHOD}
+DEFAULT_SETTINGS = {"max_distance": 10, "min_frames": 2, "duration_tol": 1.0, "method": METHOD, "workers": 4}
 THUMB_WIDTH = 320
 COMMIT_EVERY = 50
 
@@ -64,8 +68,8 @@ def _has_fingerprints(conn: sqlite3.Connection, file_id: int) -> bool:
     ).fetchone() is not None
 
 
-def _save_thumb(fps, file_id: int, thumbs_dir: str) -> str | None:
-    """Save the middle frame (index 1, else any non-None) as a JPEG at most THUMB_WIDTH wide."""
+def _pick_thumb(fps) -> Image.Image | None:
+    """Middle frame (index 1, else any non-None) as RGB, at most THUMB_WIDTH wide."""
     chosen = None
     for idx, _h, img in fps:
         if idx == 1 and img is not None:
@@ -82,14 +86,32 @@ def _save_thumb(fps, file_id: int, thumbs_dir: str) -> str | None:
     if img.width > THUMB_WIDTH:
         height = max(1, round(img.height * THUMB_WIDTH / img.width))
         img = img.resize((THUMB_WIDTH, height), Image.Resampling.LANCZOS)
+    return img
+
+
+def _write_thumb(img: Image.Image, file_id: int, thumbs_dir: str) -> str:
     os.makedirs(thumbs_dir, exist_ok=True)
     out = os.path.join(thumbs_dir, f"{file_id}.jpg")
     img.save(out, "JPEG", quality=85)
     return out
 
 
-def _process_file(conn, path: str, root: str, thumbs_dir: str | None, stats: dict, emit: Emit) -> None:
-    st = os.stat(path)
+def _analyze(path: str) -> dict:
+    """Worker-thread body: probe and fingerprint one file. No database access, never raises."""
+    try:
+        meta = probe(path)
+        fps = fingerprint(path, meta["duration"])
+        return {
+            "meta": meta,
+            "hashes": {idx: h for idx, h, _img in fps if h is not None},
+            "thumb": _pick_thumb(fps),
+            "error": None,
+        }
+    except Exception as e:  # any per-file failure marks the file and the scan goes on
+        return {"meta": None, "hashes": {}, "thumb": None, "error": str(e) or type(e).__name__}
+
+
+def _reuse_if_cached(conn, path: str, root: str, st: os.stat_result) -> bool:
     row = conn.execute(
         "SELECT id, size, mtime, status FROM files WHERE path=?", (path,)
     ).fetchone()
@@ -101,9 +123,13 @@ def _process_file(conn, path: str, root: str, thumbs_dir: str | None, stats: dic
         and _has_fingerprints(conn, row["id"])
     ):
         conn.execute("UPDATE files SET root=? WHERE id=?", (root, row["id"]))
-        stats["cached"] += 1
-        return
+        return True
+    return False
 
+
+def _store(conn, path: str, root: str, st: os.stat_result, res: dict,
+           thumbs_dir: str | None, stats: dict, emit: Emit) -> None:
+    """Main thread only: write one analysed file's row, fingerprints and thumbnail."""
     conn.execute(
         """INSERT INTO files(path, root, size, mtime, status, error) VALUES(?, ?, ?, ?, 'new', NULL)
            ON CONFLICT(path) DO UPDATE SET root=excluded.root, size=excluded.size,
@@ -112,13 +138,16 @@ def _process_file(conn, path: str, root: str, thumbs_dir: str | None, stats: dic
     )
     file_id = conn.execute("SELECT id FROM files WHERE path=?", (path,)).fetchone()["id"]
     try:
-        meta = probe(path)
-        fps = fingerprint(path, meta["duration"])
-        thumb = _save_thumb(fps, file_id, thumbs_dir) if thumbs_dir else None
+        if res["error"] is not None:
+            raise RuntimeError(res["error"])
+        thumb = None
+        if thumbs_dir and res["thumb"] is not None:
+            thumb = _write_thumb(res["thumb"], file_id, thumbs_dir)
+        meta = res["meta"]
         conn.execute("DELETE FROM fingerprints WHERE file_id=? AND method=?", (file_id, METHOD))
         conn.executemany(
             "INSERT INTO fingerprints(file_id, method, frame_idx, value) VALUES(?, ?, ?, ?)",
-            [(file_id, METHOD, idx, db.u64_to_db(h)) for idx, h, _img in fps if h is not None],
+            [(file_id, METHOD, idx, db.u64_to_db(h)) for idx, h in res["hashes"].items()],
         )
         conn.execute(
             """UPDATE files SET duration=?, width=?, height=?, bit_rate=?, codec=?, score=?,
@@ -137,22 +166,58 @@ def _process_file(conn, path: str, root: str, thumbs_dir: str | None, stats: dic
         emit("file_error", path=path, error=msg)
 
 
-def _index_files(conn, roots: list[str], thumbs_dir: str | None, emit: Emit) -> tuple[dict, set[str]]:
+def _index_files(conn, roots: list[str], thumbs_dir: str | None, workers: int,
+                 emit: Emit) -> tuple[dict, set[str]]:
     files = _walk(roots)
     emit("files_found", count=len(files))
-    stats = {"files": len(files), "cached": 0, "unreadable": 0}
-    seen: set[str] = set()
     total = len(files)
-    for i, (path, root) in enumerate(files, 1):
+    stats = {"files": total, "cached": 0, "unreadable": 0}
+    seen: set[str] = set()
+    done = 0
+
+    def progressed(path: str) -> None:
+        nonlocal done
+        done += 1
+        if done % COMMIT_EVERY == 0:
+            conn.commit()
+        emit("progress", phase="fingerprint", done=done, total=total, path=path)
+
+    # Main thread: stat each file and reuse cached rows. The rest go to the analysis pools.
+    todo: list[tuple[str, str, os.stat_result]] = []
+    for path, root in files:
         seen.add(path)
         try:
-            _process_file(conn, path, root, thumbs_dir, stats, emit)
+            st = os.stat(path)
         except OSError as e:  # file vanished or became unreadable between walk and stat
             stats["unreadable"] += 1
             emit("file_error", path=path, error=str(e) or type(e).__name__)
-        if i % COMMIT_EVERY == 0:
-            conn.commit()
-        emit("progress", phase="fingerprint", done=i, total=total, path=path)
+            progressed(path)
+            continue
+        if _reuse_if_cached(conn, path, root, st):
+            stats["cached"] += 1
+            progressed(path)
+        else:
+            todo.append((path, root, st))
+
+    # One pool per drive, so different disks run concurrently. `workers` threads per drive.
+    pools: dict[str, ThreadPoolExecutor] = {}
+    info: dict = {}
+    try:
+        for path, root, st in todo:
+            key = os.path.splitdrive(path)[0].upper()
+            if key not in pools:
+                pools[key] = ThreadPoolExecutor(max_workers=workers)
+            info[pools[key].submit(_analyze, path)] = (path, root, st)
+        for fut in as_completed(info):
+            path, root, st = info[fut]
+            _store(conn, path, root, st, fut.result(), thumbs_dir, stats, emit)
+            progressed(path)
+    except BaseException:  # KeyboardInterrupt or a DB error: drop queued work, then re-raise
+        for pool in pools.values():
+            pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    for pool in pools.values():
+        pool.shutdown()
     conn.commit()
     return stats, seen
 
@@ -238,12 +303,16 @@ def run_scan(
 ) -> int:
     """Scan roots and store the result. Returns the scan id.
 
-    Raises ValueError (before any row is written) when a root is not a directory.
+    Raises ValueError (before any row is written) when a root is not a directory or
+    `workers` is not an integer >= 1.
     """
     cfg = {**DEFAULT_SETTINGS, **(settings or {})}
     for r in roots:
         if not os.path.isdir(r):
             raise ValueError(f"root is not a directory: {r}")
+    workers = cfg["workers"]
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError(f"workers must be an integer >= 1: {workers!r}")
     norm_roots = _normalise_roots(roots)
 
     cur = conn.execute(
@@ -255,7 +324,7 @@ def run_scan(
     emit("scan_started", scan_id=scan_id, roots=norm_roots)
 
     try:
-        stats, seen = _index_files(conn, norm_roots, thumbs_dir, emit)
+        stats, seen = _index_files(conn, norm_roots, thumbs_dir, workers, emit)
         _mark_missing(conn, norm_roots, seen)
         groups, duplicates = _build_groups(conn, scan_id, norm_roots, cfg, emit)
         stats.update(groups=groups, duplicates=duplicates)

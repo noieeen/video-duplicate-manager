@@ -185,6 +185,11 @@ function registerIpc(): void {
     const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts);
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
+  ipcMain.handle("dialog:pickFolders", async (): Promise<string[]> => {
+    const opts = { properties: ["openDirectory" as const, "multiSelections" as const] };
+    const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts);
+    return res.canceled ? [] : res.filePaths;
+  });
   ipcMain.handle("settings:get", (): Settings => loadSettings());
   ipcMain.handle("settings:save", (_e, s: Settings): void => saveSettings(s));
   ipcMain.handle("engine:run", (_e, args: unknown): Promise<RunResult> => {

@@ -72,6 +72,7 @@ export interface RunResult {
 
 export interface Api {
   pickFolder(): Promise<string | null>;
+  pickFolders(): Promise<string[]>;
   getSettings(): Promise<Settings>;
   saveSettings(s: Settings): Promise<void>;
   run(args: string[]): Promise<RunResult>;

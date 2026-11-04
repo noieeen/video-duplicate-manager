@@ -21,8 +21,8 @@ export default function Folders({ settings, onChange, report }: Props) {
   }
 
   async function addViaDialog() {
-    const p = await window.api.pickFolder();
-    if (p) addRoots([p]);
+    const paths = await window.api.pickFolders();
+    if (paths.length > 0) addRoots(paths);
   }
 
   async function chooseDupRoot() {

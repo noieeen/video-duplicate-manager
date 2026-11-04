@@ -3,6 +3,7 @@ import type { Api, EngineEvent, Settings } from "../src/types";
 
 const api: Api = {
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
+  pickFolders: () => ipcRenderer.invoke("dialog:pickFolders"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (s: Settings) => ipcRenderer.invoke("settings:save", s),
   run: (args: string[]) => ipcRenderer.invoke("engine:run", args),

@@ -36,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--thumbs", metavar="DIR", help="thumbnail folder (default: <db dir>/thumbs)")
     s.add_argument("--max-distance", type=int, default=DEFAULT_SETTINGS["max_distance"])
     s.add_argument("--min-frames", type=int, default=DEFAULT_SETTINGS["min_frames"])
+    s.add_argument("--workers", type=int, default=DEFAULT_SETTINGS["workers"],
+                   help="files analysed in parallel per drive (default: %(default)s)")
 
     g = sub.add_parser("groups", help="list duplicate groups of a scan")
     g.add_argument("--scan", type=int, help="scan id (default: latest done scan)")
@@ -71,7 +73,8 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
     cmd = args.command
     if cmd == "scan":
         thumbs = args.thumbs or os.path.join(os.path.dirname(os.path.abspath(args.db)), "thumbs")
-        settings = {"max_distance": args.max_distance, "min_frames": args.min_frames}
+        settings = {"max_distance": args.max_distance, "min_frames": args.min_frames,
+                    "workers": args.workers}
         run_scan(conn, args.root, emit, settings=settings, thumbs_dir=thumbs)
     elif cmd == "groups":
         scan_id = args.scan if args.scan is not None else latest_scan_id(conn)
