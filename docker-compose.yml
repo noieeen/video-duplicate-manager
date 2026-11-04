@@ -1,0 +1,14 @@
+# Usage (PowerShell):  $env:VIDEO_DIR="D:/some-folder"; docker compose run --rm dedup
+# or copy .env.example to .env.  Duplicates are MOVED out of VIDEO_DIR into OUTPUT_DIR/duplicates.
+services:
+  dedup:
+    build: .
+    environment:
+      SIMILARITY_THRESHOLD: ${SIMILARITY_THRESHOLD:-0.95}
+    volumes:
+      - ${VIDEO_DIR:?set VIDEO_DIR to the folder to scan}:/videos
+      - ${OUTPUT_DIR:-./output}:/output
+      - clip-cache:/root/.cache/clip   # CLIP weights (~340MB), downloaded once
+
+volumes:
+  clip-cache:
