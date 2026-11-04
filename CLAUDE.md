@@ -23,6 +23,8 @@ Non-obvious points:
 - `extract_frame` tries a fast input seek first, then falls back to an accurate output seek. MPEG-TS with sparse keyframes needs the fallback.
 - CLI global options go **before** the subcommand: `python -m engine --db X [--human] scan --root A`.
 - The app's dev mode spawns `<repo>/.venv/Scripts/python.exe -m engine`. Packaged mode spawns `resources/engine/engine.exe` plus `resources/ffmpeg/`. The thumbnail protocol `thumb://` only serves files under `userData/thumbs`.
+- `thumb` is a *standard* scheme, so URLs need a host: `thumb://local/<encodeURIComponent(path)>`. `thumb:///…` fails to parse.
+- `confirm --all-pending` and `groups` default to the latest scan with status `done`.
 
 ## Commands
 
@@ -37,6 +39,15 @@ docker compose run --rm engine scan --root /videos     # headless, VIDEO_DIR mou
 ```
 
 Never point a test or manual run at the owner's real video folders (`D:\...`). Use `tmp_path` or a scratch folder.
+
+Gotchas on this machine:
+
+- Git Bash rewrites `/videos` into a Windows path in `docker compose run`. Prefix the command with `MSYS_NO_PATHCONV=1`.
+- `ffmpeg` on PATH is a scoop shim. `scripts/build_engine.py` follows it to the real binary before copying it into `vendor/ffmpeg/`.
+- The dev `.venv` still has torch installed (not in requirements). `build_engine.py` excludes torch, because scipy would otherwise pull it in and grow the engine from about 143 MB to about 488 MB.
+- Some tracked files have CRLF line endings, so edit them with the Edit tool rather than exact-match string replacement in scripts.
+- Live-testing the app: `npm run build`, then `node_modules/.bin/electron . --remote-debugging-port=9333 --user-data-dir=<scratch>` (isolated userData), then drive `window.api` and take screenshots over CDP (`/json` → `Runtime.evaluate`, `Page.captureScreenshot`).
+- CI: `.github/workflows/build.yml` (windows-latest) runs pytest, builds the engine and the NSIS installer, and uploads `app/release/*.exe` as an artifact.
 
 ## Branches
 
