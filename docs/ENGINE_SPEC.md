@@ -161,3 +161,31 @@ App tab **Convert** (`app/src/screens/Convert.tsx`, added to the tab bar after H
 
 Engine helper command for the app: `files --ext EXT` → event `files {paths:[...]}` = files of the latest done scan with
 `status='ok'` whose path ends with EXT (case-insensitive).
+
+## Fresh scan, clear cache, files from folders
+
+**`scan --fresh`** (`run_scan(..., settings={"fresh": True})`, default False, stored in scans.settings): skip the
+cache check for every file — every file is probed + fingerprinted again (counted as not cached), its old fingerprints
+replaced. Everything else (groups, events) unchanged.
+
+**`clear-cache`** (new `engine/maintenance.py`: `clear_cache(conn, thumbs_dir) -> dict`): deletes ALL rows of
+`fingerprints`; sets on every `files` row with status `ok` or `unreadable`: `status='new', error=NULL, duration=NULL,
+width=NULL, height=NULL, bit_rate=NULL, codec=NULL, score=NULL, thumb=NULL, probed_at=NULL`; deletes `*.jpg` files
+directly inside `thumbs_dir` (no recursion, nothing else). It does NOT touch `scans`, `dup_groups`, `group_members`,
+`actions`, or rows with status `moved`/`missing` (History and Undo keep working). Refuses (raises, CLI `error`, exit 1)
+while any scan row has status `running` **and** started less than 6 hours ago. Event: `cache_cleared {fingerprints,
+files_reset, thumbs_deleted}`. CLI: `python -m engine --db X clear-cache [--thumbs DIR]` (default `<db dir>/thumbs`).
+
+**`files --root DIR`** (repeatable; alternative to `--ext`-from-scan): walk the given folders recursively and return
+video files from disk (not the DB): extensions = `scan.VIDEO_EXTS` minus `.mp4` by default, or only `--ext EXT` when
+given; case-insensitive; paths via `os.path.realpath` (keeps casing); sorted; de-duplicated. Same event
+`files {paths}`. Implemented as `convert.video_files_under(roots, ext=None) -> list[str]`. `--root` and the scan-based
+mode can't be mixed: with `--root`, `--ext` only filters.
+
+App:
+- **Scan** screen: checkbox "Fresh scan (ignore cache)" → adds `--fresh`; button "Clear cache…" (confirm dialog
+  explaining: forgets fingerprints/metadata/thumbnails, keeps History/Undo, next scan re-reads every file) →
+  `run(["clear-cache"])`, shows the counts from `cache_cleared`. Both disabled while a scan runs.
+- **Convert** screen: button "Add folders..." next to "Add files..." → `window.api.pickFolders()` (already exists,
+  multi-select) → `run(["files", ...folders.flatMap(f => ["--root", f])])` → add returned paths (same de-dup as
+  other adders) and show "Found N file(s) in M folder(s)".

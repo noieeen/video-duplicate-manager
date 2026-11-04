@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { engineError, runCli } from "../engine";
+import { engineError, findEvent, runCli } from "../engine";
 import { fmtPercent } from "../format";
 import type { ScanStats } from "../types";
 
@@ -24,6 +24,9 @@ export default function Scan({ roots, workers, onWorkersChange, report }: Props)
   const [fileErrors, setFileErrors] = useState<{ path: string; error: string }[]>([]);
   const [summary, setSummary] = useState<ScanStats | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
+  const [fresh, setFresh] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [cacheNote, setCacheNote] = useState<string | null>(null);
   const cancelRequested = useRef(false);
 
   useEffect(
@@ -60,7 +63,9 @@ export default function Scan({ roots, workers, onWorkersChange, report }: Props)
     setSummary(null);
     setOutcome(null);
 
-    const res = await runCli(["scan", "--workers", String(workers), ...roots.flatMap((r) => ["--root", r])]);
+    const args = ["scan", "--workers", String(workers), ...roots.flatMap((r) => ["--root", r])];
+    if (fresh) args.push("--fresh");
+    const res = await runCli(args);
 
     setRunning(false);
     setCancelling(false);
@@ -74,6 +79,28 @@ export default function Scan({ roots, workers, onWorkersChange, report }: Props)
     cancelRequested.current = true;
     setCancelling(true);
     void window.api.cancel();
+  }
+
+  async function clearCache() {
+    const ok = window.confirm(
+      "Clear the scan cache? This forgets fingerprints, video metadata and thumbnails. History and Undo are kept. The next scan re-reads every file (slow on large folders).",
+    );
+    if (!ok) return;
+    setClearing(true);
+    setCacheNote(null);
+    const res = await runCli(["clear-cache"]);
+    setClearing(false);
+    const err = engineError(res);
+    if (err) {
+      report(err);
+      return;
+    }
+    const ev = findEvent(res, "cache_cleared");
+    if (ev) {
+      setCacheNote(
+        `Cache cleared: ${ev.fingerprints} fingerprints, ${ev.files_reset} files reset, ${ev.thumbs_deleted} thumbnails deleted.`,
+      );
+    }
   }
 
   const pct = progress ? fmtPercent(progress.done, progress.total) : 0;
@@ -112,6 +139,17 @@ export default function Scan({ roots, workers, onWorkersChange, report }: Props)
           </button>
         )}
       </div>
+
+      <div className="row">
+        <label className="row">
+          <input type="checkbox" checked={fresh} disabled={running} onChange={(e) => setFresh(e.target.checked)} />
+          Fresh scan (ignore cache)
+        </label>
+        <button disabled={running || clearing} onClick={() => void clearCache()}>
+          {clearing ? "Clearing..." : "Clear cache…"}
+        </button>
+      </div>
+      {cacheNote && <p className="muted">{cacheNote}</p>}
 
       {running && (
         <div className="card">

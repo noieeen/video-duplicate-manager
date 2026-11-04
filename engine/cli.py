@@ -11,8 +11,9 @@ import sys
 
 from engine import db
 from engine.apply import apply_groups, undo_batch
-from engine.convert import ENCODERS, MODES, ok_files_with_ext, run_convert
+from engine.convert import ENCODERS, MODES, ok_files_with_ext, run_convert, video_files_under
 from engine.events import Emitter
+from engine.maintenance import clear_cache
 from engine.queries import (
     GROUP_STATUSES,
     ROLES,
@@ -39,6 +40,8 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--min-frames", type=int, default=DEFAULT_SETTINGS["min_frames"])
     s.add_argument("--workers", type=int, default=DEFAULT_SETTINGS["workers"],
                    help="files analysed in parallel per drive (default: %(default)s)")
+    s.add_argument("--fresh", action="store_true",
+                   help="ignore the scan cache: re-read and re-fingerprint every file")
 
     g = sub.add_parser("groups", help="list duplicate groups of a scan")
     g.add_argument("--scan", type=int, help="scan id (default: latest done scan)")
@@ -68,8 +71,13 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("history", help="list apply batches")
 
-    f = sub.add_parser("files", help="list files of the latest done scan with an extension")
-    f.add_argument("--ext", required=True, metavar="EXT", help="e.g. .ts (case-insensitive)")
+    cc = sub.add_parser("clear-cache", help="forget fingerprints, metadata and thumbnails (keeps History/Undo)")
+    cc.add_argument("--thumbs", metavar="DIR", help="thumbnail folder (default: <db dir>/thumbs)")
+
+    f = sub.add_parser("files", help="list video files: of the latest done scan (--ext), or under folders (--root)")
+    f.add_argument("--ext", metavar="EXT", help="e.g. .ts (case-insensitive)")
+    f.add_argument("--root", action="append", metavar="DIR",
+                   help="folder to walk recursively (repeatable); lists files from disk, not the DB")
 
     cv = sub.add_parser("convert", help="convert videos to MP4 (never overwrites or deletes the source)")
     cv.add_argument("--input", action="append", metavar="FILE", help="video file (repeatable)")
@@ -88,8 +96,11 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
     if cmd == "scan":
         thumbs = args.thumbs or os.path.join(os.path.dirname(os.path.abspath(args.db)), "thumbs")
         settings = {"max_distance": args.max_distance, "min_frames": args.min_frames,
-                    "workers": args.workers}
+                    "workers": args.workers, "fresh": args.fresh}
         run_scan(conn, args.root, emit, settings=settings, thumbs_dir=thumbs)
+    elif cmd == "clear-cache":
+        thumbs = args.thumbs or os.path.join(os.path.dirname(os.path.abspath(args.db)), "thumbs")
+        emit("cache_cleared", **clear_cache(conn, thumbs))
     elif cmd == "groups":
         scan_id = args.scan if args.scan is not None else latest_scan_id(conn)
         groups = groups_json(conn, scan_id, args.status) if scan_id is not None else []
@@ -113,7 +124,10 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
     elif cmd == "history":
         emit("history", batches=history_json(conn))
     elif cmd == "files":
-        emit("files", paths=ok_files_with_ext(conn, args.ext))
+        if args.root:
+            emit("files", paths=video_files_under(args.root, args.ext))
+        else:
+            emit("files", paths=ok_files_with_ext(conn, args.ext))
     elif cmd == "convert":
         inputs = list(args.input or [])
         if args.from_scan_ext:
@@ -134,7 +148,10 @@ def _force_utf8_stdout() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.command == "files" and not args.root and args.ext is None:
+        parser.error("the following arguments are required: --ext")
     _force_utf8_stdout()
     emit = Emitter(human=args.human).emit
     conn = None

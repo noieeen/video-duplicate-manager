@@ -219,3 +219,72 @@ def test_cli_convert_without_inputs_fails(tmp_path):
     errors = _of(events, "error")
     assert len(errors) == 1
     assert errors[0]["message"]
+
+
+def _touch(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x")
+    return str(path)
+
+
+def _real(paths):
+    return [os.path.realpath(p) for p in paths]
+
+
+def test_video_files_under_default_skips_mp4_and_keeps_casing(tmp_path):
+    root = tmp_path / "root"
+    a = _touch(root / "a.ts")
+    b = _touch(root / "sub" / "deep" / "b.TS")
+    _touch(root / "c.mp4")
+    d = _touch(root / "d.mkv")
+    _touch(root / "notes.txt")
+
+    got = convert.video_files_under([str(root)])
+    assert got == sorted(_real([a, b, d]))
+    assert _real([b])[0].endswith("b.TS")
+
+
+def test_video_files_under_with_ext_and_dedupe(tmp_path):
+    root = tmp_path / "root"
+    a = _touch(root / "a.ts")
+    b = _touch(root / "sub" / "b.TS")
+    _touch(root / "d.mkv")
+
+    assert convert.video_files_under([str(root)], ".ts") == sorted(_real([a, b]))
+    assert convert.video_files_under([str(root)], "TS") == sorted(_real([a, b]))
+    # the same folder given twice, and a folder nested in another, must not duplicate files
+    assert convert.video_files_under([str(root), str(root / "sub")], ".ts") == sorted(_real([a, b]))
+
+
+def test_video_files_under_missing_root_raises(tmp_path):
+    with pytest.raises(ValueError):
+        convert.video_files_under([str(tmp_path / "missing")])
+
+
+def test_cli_files_root_lists_files_from_disk(tmp_path):
+    root = tmp_path / "root"
+    a = _touch(root / "a.ts")
+    _touch(root / "c.mp4")
+    db = tmp_path / "lib" / "library.db"
+
+    code, events = _run(db, "files", "--root", str(root))
+    assert code == 0
+    assert _of(events, "files")[0]["paths"] == sorted(_real([a]))
+
+    code, events = _run(db, "files", "--root", str(root), "--ext", ".mp4")
+    assert code == 0
+    assert _of(events, "files")[0]["paths"] == sorted(_real([str(root / "c.mp4")]))
+
+
+def test_cli_files_root_missing_folder_is_error(tmp_path):
+    db = tmp_path / "lib" / "library.db"
+    code, events = _run(db, "files", "--root", str(tmp_path / "nope"))
+    assert code == 1
+    assert _of(events, "error")
+
+
+def test_cli_files_without_root_or_ext_is_usage_error(tmp_path):
+    db = tmp_path / "lib" / "library.db"
+    code, events = _run(db, "files")
+    assert code == 2
+    assert not events

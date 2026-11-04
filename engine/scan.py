@@ -24,7 +24,8 @@ from engine.scoring import pick_keeper, score
 
 VIDEO_EXTS = {".mp4", ".ts", ".mkv", ".avi", ".mov", ".m4v", ".wmv", ".webm", ".flv"}
 METHOD = "phash"
-DEFAULT_SETTINGS = {"max_distance": 10, "min_frames": 2, "duration_tol": 1.0, "method": METHOD, "workers": 4}
+DEFAULT_SETTINGS = {"max_distance": 10, "min_frames": 2, "duration_tol": 1.0, "method": METHOD, "workers": 4,
+                    "fresh": False}
 THUMB_WIDTH = 320
 COMMIT_EVERY = 50
 
@@ -167,7 +168,7 @@ def _store(conn, path: str, root: str, st: os.stat_result, res: dict,
 
 
 def _index_files(conn, roots: list[str], thumbs_dir: str | None, workers: int,
-                 emit: Emit) -> tuple[dict, set[str]]:
+                 emit: Emit, fresh: bool = False) -> tuple[dict, set[str]]:
     files = _walk(roots)
     emit("files_found", count=len(files))
     total = len(files)
@@ -193,7 +194,7 @@ def _index_files(conn, roots: list[str], thumbs_dir: str | None, workers: int,
             emit("file_error", path=path, error=str(e) or type(e).__name__)
             progressed(path)
             continue
-        if _reuse_if_cached(conn, path, root, st):
+        if not fresh and _reuse_if_cached(conn, path, root, st):
             stats["cached"] += 1
             progressed(path)
         else:
@@ -329,7 +330,7 @@ def run_scan(
     emit("scan_started", scan_id=scan_id, roots=norm_roots)
 
     try:
-        stats, seen = _index_files(conn, norm_roots, thumbs_dir, workers, emit)
+        stats, seen = _index_files(conn, norm_roots, thumbs_dir, workers, emit, fresh=bool(cfg["fresh"]))
         _mark_missing(conn, norm_roots, seen)
         groups, duplicates = _build_groups(conn, scan_id, norm_roots, cfg, emit)
         stats.update(groups=groups, duplicates=duplicates)

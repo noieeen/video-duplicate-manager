@@ -310,3 +310,36 @@ def test_stale_running_scan_is_closed_on_next_scan(tmp_path, make_video):
     statuses = [r[0] for r in conn.execute("SELECT status FROM scans ORDER BY id")]
     assert statuses == ["cancelled", "done"]
     conn.close()
+
+
+def test_fresh_scan_ignores_cache_and_replaces_fingerprints(tmp_path, make_video):
+    root_a, root_b = tmp_path / "rootA", tmp_path / "rootB"
+    make_video(root_a / "pair_hd.mp4", source="testsrc", w=640, h=480, duration=30)
+    make_video(root_b / "pair_sd.mp4", source="testsrc", w=320, h=240, duration=30)
+    make_video(root_a / "solo.mp4", source="mandelbrot", w=320, h=240, duration=30)
+    roots = [str(root_a), str(root_b)]
+
+    conn = _conn(tmp_path)
+    _, emit = _emitter()
+    first = scan_mod.run_scan(conn, roots, emit)
+    n_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+    fp_before = conn.execute("SELECT COUNT(*) FROM fingerprints").fetchone()[0]
+
+    second = scan_mod.run_scan(conn, roots, emit)
+    stats2 = json.loads(conn.execute("SELECT stats FROM scans WHERE id=?", (second,)).fetchone()[0])
+    assert stats2["cached"] == n_files
+
+    third = scan_mod.run_scan(conn, roots, emit, settings={"fresh": True})
+    stats3 = json.loads(conn.execute("SELECT stats FROM scans WHERE id=?", (third,)).fetchone()[0])
+    settings3 = json.loads(conn.execute("SELECT settings FROM scans WHERE id=?", (third,)).fetchone()[0])
+    assert stats3["cached"] == 0
+    assert settings3["fresh"] is True
+    assert conn.execute("SELECT COUNT(*) FROM fingerprints").fetchone()[0] == fp_before
+    assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == n_files
+
+    def paths(scan_id):
+        return {frozenset(m["path"] for m in g["members"]) for g in queries.groups_json(conn, scan_id)}
+
+    assert len(paths(third)) == 1
+    assert paths(third) == paths(first)
+    conn.close()

@@ -123,6 +123,23 @@ export default function Convert({ report }: Props) {
     if (paths.length > 0) addFiles(paths);
   }
 
+  async function addFolders() {
+    const folders = await window.api.pickFolders();
+    if (folders.length === 0) return;
+    setNotice(null);
+    const res = await runCli(["files", ...folders.flatMap((f) => ["--root", f])]);
+    const err = engineError(res);
+    if (err) {
+      report(err);
+      return;
+    }
+    const paths = findEvent(res, "files")?.paths ?? [];
+    addFiles(paths);
+    setNotice(
+      `Found ${paths.length} file(s) in ${folders.length} folder(s). Files already listed are not added twice.`,
+    );
+  }
+
   async function addFromScan() {
     setNotice(null);
     const res = await runCli(["files", "--ext", ".ts"]);
@@ -231,6 +248,9 @@ export default function Convert({ report }: Props) {
           <div className="row">
             <button onClick={() => void addViaDialog()} disabled={running}>
               Add files...
+            </button>
+            <button onClick={() => void addFolders()} disabled={running}>
+              Add folders...
             </button>
             <button onClick={() => void addFromScan()} disabled={running}>
               Add .ts from last scan

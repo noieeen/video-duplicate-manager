@@ -14,6 +14,7 @@ from typing import Callable
 from engine import tools
 from engine.probe import ProbeError, probe
 from engine.queries import latest_scan_id
+from engine.scan import VIDEO_EXTS
 
 MODES = ("copy", "reencode")
 ENCODERS = ("auto", "nvenc", "x264")
@@ -247,6 +248,29 @@ def run_convert(conn, inputs: list[str], emit, mode: str = "copy", encoder: str 
     summary = {"converted": converted, "failed": failed, "skipped": skipped, "outputs": outputs}
     emit("convert_done", **summary)
     return summary
+
+
+def video_files_under(roots: list[str], ext: str | None = None) -> list[str]:
+    """Video files found on disk under the given folders (recursive), not read from the DB.
+
+    Default extensions: scan.VIDEO_EXTS minus ".mp4". With `ext`, only that extension. Matching is
+    case-insensitive. Returns sorted, de-duplicated realpaths. Raises ValueError if a root is not a directory.
+    """
+    for root in roots:
+        if not os.path.isdir(root):
+            raise ValueError(f"root is not a directory: {root}")
+    if ext is None:
+        exts = VIDEO_EXTS - {".mp4"}
+    else:
+        e = ext.lower()
+        exts = {e if e.startswith(".") else "." + e}
+    found: set[str] = set()
+    for root in roots:
+        for dirpath, _dirs, names in os.walk(root):
+            for name in names:
+                if os.path.splitext(name)[1].lower() in exts:
+                    found.add(os.path.realpath(os.path.join(dirpath, name)))
+    return sorted(found)
 
 
 def ok_files_with_ext(conn, ext: str) -> list[str]:

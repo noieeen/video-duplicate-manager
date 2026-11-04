@@ -66,6 +66,7 @@ export type EngineEvent =
   | { type: "undo_done"; batch_id: string; restored: number; failed: number }
   | { type: "history"; batches: BatchInfo[] }
   | { type: "files"; paths: string[] }
+  | { type: "cache_cleared"; fingerprints: number; files_reset: number; thumbs_deleted: number }
   | { type: "convert_started"; total: number; mode: string }
   | ({ type: "converted" } & ConvertResult)
   | { type: "convert_done"; converted: number; failed: number; skipped: number; outputs: string[] }
