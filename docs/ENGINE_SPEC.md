@@ -109,3 +109,55 @@ Vite + React + TypeScript renderer, Electron main in TypeScript, `electron-build
 - Preload exposes `window.api` (contextIsolation on, nodeIntegration off): `pickFolder()`, `getSettings()`, `saveSettings(s)`, `run(args: string[]) -> Promise<{code, events}>`, `cancel()`, `onEvent(cb) -> unsubscribe`, `openPath(p)`, `showInFolder(p)`, `fileUrl(p)` (thumbnails served via a custom `thumb://` protocol or `file://`).
 
 Screens: **Folders** (list roots, add via dialog or drag-drop, remove; duplicates folder picker), **Scan** (start, live progress bar per phase, current file, cancel, summary), **Review** (group cards: thumbnail + path + resolution + duration + bitrate + size per member, keeper badge, "Make keeper", "Ignore", per-group "Confirm" / "Dismiss", and a top **"Accept all suggestions"** button = `confirm --all-pending`), **Apply** (count of confirmed groups/files, target folder, confirm dialog, progress, result), **History** (batches with Undo).
+
+## Convert to MP4 (`convert.py`, CLI `convert`, app tab **Convert**)
+
+Purpose: turn playable non-MP4 videos (mainly MPEG-TS `.ts`) into `.mp4`. The engine never deletes or overwrites; the
+app may move a source to the Recycle Bin after a verified success, only when the user ticks that option.
+
+`engine/convert.py` public API:
+- `nvenc_available() -> bool`: `h264_nvenc` listed in `ffmpeg -hide_banner -encoders` AND a 1-frame test encode
+  (`-f lavfi -i color=s=256x256:d=1 -frames:v 1 -c:v h264_nvenc -f null -`) exits 0. Cached per process.
+- `output_path(src, out_dir=None) -> str`: `<out_dir or dirname(src)>/<stem>.mp4`; if that path exists (or is `src`
+  itself), use `<stem>_1.mp4`, `_2`, ... **Never returns an existing path.**
+- `convert_file(src, dst, mode="copy", encoder="auto", on_percent=None) -> dict`:
+  - writes to `dst + ".partial"` first (ffmpeg `-f mp4` because of that suffix), then `os.replace` to `dst` only after
+    verification. On any failure the `.partial` is removed and `ConvertError(message)` is raised.
+  - mode `copy`: `ffmpeg -v error -nostdin -y -i src -map 0:v:0 -map 0:a? -c copy -movflags +faststart -f mp4 <partial>`
+    (drops data streams such as timed_id3, which MP4 cannot hold).
+  - mode `reencode`: same maps, `-c:a aac -b:a 192k`, video `-c:v h264_nvenc -preset p5 -cq 23` when encoder is `nvenc`,
+    or `auto` and `nvenc_available()`; else `-c:v libx264 -preset medium -crf 20`. `encoder="nvenc"` when unavailable →
+    ConvertError.
+  - progress: add `-progress pipe:1 -nostats`; parse `out_time_us=` (or `out_time_ms=`, also microseconds) lines and call
+    `on_percent(int 0..100)` relative to the source duration from `probe`. Read stdout incrementally (Popen), stderr kept
+    for the error message. Use `tools.ffmpeg_bin()`; `CREATE_NO_WINDOW` on Windows (same as `tools.run`).
+  - verification: `probe(dst_partial)` succeeds and `abs(out.duration - src.duration) <= max(1.0, 0.01*src.duration)`.
+  - returns `{"input", "output", "mode", "encoder" ("copy"|"nvenc"|"x264"), "seconds", "size_in", "size_out"}`.
+- `run_convert(conn, inputs: list[str], emit, mode="copy", encoder="auto", out_dir=None) -> dict`: processes inputs
+  sequentially. Skips (event `skip {path, reason}`) inputs that do not exist or already end with `.mp4`.
+  Events: `convert_started {total, mode}`; per file `progress {phase:"convert", done, total, path, percent}` (several per
+  file while percent changes; `done` = files finished so far); `converted {...convert_file result}`;
+  `file_error {path, error}`; finally `convert_done {converted, failed, skipped, outputs:[output paths]}`. Returns the same
+  dict as convert_done. `conn` is used only for `--from-scan-ext` resolution in the CLI (may be None otherwise).
+
+CLI: `python -m engine --db X convert [--input FILE ...] [--from-scan-ext .ts] [--mode copy|reencode]
+[--encoder auto|nvenc|x264] [--out-dir DIR]`. `--from-scan-ext EXT` adds every file of the latest done scan with
+`status='ok'` whose path ends with EXT (case-insensitive) under that scan's roots. At least one input is required
+(else `error`, exit 1).
+
+App tab **Convert** (`app/src/screens/Convert.tsx`, added to the tab bar after History):
+- File list: "Add files..." (`window.api.pickFiles()` → multi-select dialog filtered to video extensions), drag-drop
+  files, "Add .ts from last scan" (fills the list only: run `["files", "--ext", ".ts"]` and add the returned paths),
+  remove/clear.
+- Options: mode (Copy — fast, no quality loss / Re-encode), encoder (Auto / NVIDIA GPU / CPU x264) shown only for
+  re-encode, output (next to source / choose folder), checkbox "Move original to Recycle Bin after successful
+  conversion" (default off).
+- Convert → `run(["convert", ...inputs.flatMap(p => ["--input", p]), "--mode", m, "--encoder", e, (out dir)])`, live
+  per-file percent + overall done/total, Cancel (kills the engine; a leftover `<dst>.partial` is harmless and
+  `convert_file` deletes any existing `<dst>.partial` before it starts writing).
+  Results table: input → output, size before/after, status. For each `converted` event, if the checkbox is ticked,
+  call `window.api.trash(input)` (main: `shell.trashItem`).
+- New `window.api` methods: `pickFiles(): Promise<string[]>`, `trash(path): Promise<void>`.
+
+Engine helper command for the app: `files --ext EXT` → event `files {paths:[...]}` = files of the latest done scan with
+`status='ok'` whose path ends with EXT (case-insensitive).

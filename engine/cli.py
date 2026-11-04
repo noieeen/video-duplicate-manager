@@ -11,6 +11,7 @@ import sys
 
 from engine import db
 from engine.apply import apply_groups, undo_batch
+from engine.convert import ENCODERS, MODES, ok_files_with_ext, run_convert
 from engine.events import Emitter
 from engine.queries import (
     GROUP_STATUSES,
@@ -66,6 +67,19 @@ def _parser() -> argparse.ArgumentParser:
     u.add_argument("--batch", required=True)
 
     sub.add_parser("history", help="list apply batches")
+
+    f = sub.add_parser("files", help="list files of the latest done scan with an extension")
+    f.add_argument("--ext", required=True, metavar="EXT", help="e.g. .ts (case-insensitive)")
+
+    cv = sub.add_parser("convert", help="convert videos to MP4 (never overwrites or deletes the source)")
+    cv.add_argument("--input", action="append", metavar="FILE", help="video file (repeatable)")
+    cv.add_argument("--from-scan-ext", metavar="EXT",
+                    help="add every ok file of the latest done scan with this extension")
+    cv.add_argument("--mode", choices=MODES, default="copy",
+                    help="copy = lossless remux (default); reencode = h264 + aac")
+    cv.add_argument("--encoder", choices=ENCODERS, default="auto",
+                    help="re-encode only: auto (GPU if available), nvenc, x264 (default: %(default)s)")
+    cv.add_argument("--out-dir", metavar="DIR", help="output folder (default: next to each source)")
     return p
 
 
@@ -98,6 +112,15 @@ def _dispatch(args: argparse.Namespace, conn, emit) -> None:
         undo_batch(conn, args.batch, emit)
     elif cmd == "history":
         emit("history", batches=history_json(conn))
+    elif cmd == "files":
+        emit("files", paths=ok_files_with_ext(conn, args.ext))
+    elif cmd == "convert":
+        inputs = list(args.input or [])
+        if args.from_scan_ext:
+            inputs += ok_files_with_ext(conn, args.from_scan_ext)
+        if not inputs:
+            raise ValueError("no input files: pass --input FILE or --from-scan-ext EXT")
+        run_convert(conn, inputs, emit, mode=args.mode, encoder=args.encoder, out_dir=args.out_dir)
     else:  # unreachable: argparse enforces the choices
         raise ValueError(f"unknown command: {cmd}")
 

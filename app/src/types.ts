@@ -42,10 +42,20 @@ export interface ScanStats {
   duplicates: number;
 }
 
+export interface ConvertResult {
+  input: string;
+  output: string;
+  mode: string;
+  encoder: string;
+  seconds: number;
+  size_in: number;
+  size_out: number;
+}
+
 export type EngineEvent =
   | { type: "scan_started"; scan_id: number; roots: string[] }
   | { type: "files_found"; count: number }
-  | { type: "progress"; phase: string; done: number; total: number; path: string }
+  | { type: "progress"; phase: string; done: number; total: number; path: string; percent?: number }
   | { type: "file_error"; path: string; error: string }
   | { type: "group"; group_id: number; file_ids: number[] }
   | ({ type: "scan_done"; scan_id: number } & ScanStats)
@@ -55,6 +65,10 @@ export type EngineEvent =
   | { type: "apply_done"; batch_id: string; moved: number; failed: number }
   | { type: "undo_done"; batch_id: string; restored: number; failed: number }
   | { type: "history"; batches: BatchInfo[] }
+  | { type: "files"; paths: string[] }
+  | { type: "convert_started"; total: number; mode: string }
+  | ({ type: "converted" } & ConvertResult)
+  | { type: "convert_done"; converted: number; failed: number; skipped: number; outputs: string[] }
   | { type: "error"; message: string }
   // Added by the app's main process, not by the engine:
   | { type: "log"; line: string }
@@ -63,6 +77,8 @@ export type EngineEvent =
 export interface Settings {
   roots: string[];
   dupRoot: string;
+  /** Scan threads per drive (engine `--workers`). 4 suits a SATA HDD; SSDs can take 6-8. */
+  workers: number;
 }
 
 export interface RunResult {
@@ -73,6 +89,8 @@ export interface RunResult {
 export interface Api {
   pickFolder(): Promise<string | null>;
   pickFolders(): Promise<string[]>;
+  pickFiles(): Promise<string[]>;
+  trash(path: string): Promise<void>;
   getSettings(): Promise<Settings>;
   saveSettings(s: Settings): Promise<void>;
   run(args: string[]): Promise<RunResult>;

@@ -315,6 +315,11 @@ def run_scan(
         raise ValueError(f"workers must be an integer >= 1: {workers!r}")
     norm_roots = _normalise_roots(roots)
 
+    # A scan killed from outside (the app's Cancel uses taskkill) never reaches its except-block,
+    # so it stays 'running' forever. Only one engine runs at a time, so any 'running' row is stale.
+    conn.execute(
+        "UPDATE scans SET status='cancelled', finished_at=? WHERE status='running'", (db.now(),)
+    )
     cur = conn.execute(
         "INSERT INTO scans(started_at, roots, settings, status) VALUES(?, ?, ?, 'running')",
         (db.now(), json.dumps(norm_roots), json.dumps(cfg)),

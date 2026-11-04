@@ -5,6 +5,8 @@ import type { ScanStats } from "../types";
 
 interface Props {
   roots: string[];
+  workers: number;
+  onWorkersChange: (workers: number) => void;
   report: (msg: string) => void;
 }
 
@@ -14,7 +16,7 @@ interface Progress {
   path: string;
 }
 
-export default function Scan({ roots, report }: Props) {
+export default function Scan({ roots, workers, onWorkersChange, report }: Props) {
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [found, setFound] = useState<number | null>(null);
@@ -58,7 +60,7 @@ export default function Scan({ roots, report }: Props) {
     setSummary(null);
     setOutcome(null);
 
-    const res = await runCli(["scan", ...roots.flatMap((r) => ["--root", r])]);
+    const res = await runCli(["scan", "--workers", String(workers), ...roots.flatMap((r) => ["--root", r])]);
 
     setRunning(false);
     setCancelling(false);
@@ -80,6 +82,25 @@ export default function Scan({ roots, report }: Props) {
     <div className="screen">
       <h2>Scan</h2>
       <p className="muted">{roots.length} folder(s) will be scanned.</p>
+
+      <div className="row">
+        <label>
+          Workers per drive{" "}
+          <input
+            type="number"
+            min={1}
+            max={16}
+            value={workers}
+            disabled={running}
+            style={{ width: "4em" }}
+            onChange={(e) => {
+              const n = Math.round(Number(e.target.value));
+              if (Number.isFinite(n)) onWorkersChange(Math.min(16, Math.max(1, n)));
+            }}
+          />
+        </label>
+        <span className="muted">HDD: 4 · SSD/NVMe: 6–8 · more is not always faster</span>
+      </div>
 
       <div className="row">
         <button className="primary" disabled={running || roots.length === 0} onClick={start}>

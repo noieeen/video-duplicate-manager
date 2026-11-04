@@ -4,9 +4,10 @@ import Scan from "./screens/Scan";
 import Review from "./screens/Review";
 import Apply from "./screens/Apply";
 import History from "./screens/History";
+import Convert from "./screens/Convert";
 import type { Settings } from "./types";
 
-type Tab = "folders" | "scan" | "review" | "apply" | "history";
+type Tab = "folders" | "scan" | "review" | "apply" | "history" | "convert";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "folders", label: "Folders" },
@@ -14,6 +15,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "review", label: "Review" },
   { id: "apply", label: "Apply" },
   { id: "history", label: "History" },
+  { id: "convert", label: "Convert" },
 ];
 
 export default function App() {
@@ -70,7 +72,12 @@ export default function App() {
               <Folders settings={settings} onChange={updateSettings} report={report} />
             </section>
             <section {...show("scan")}>
-              <Scan roots={settings.roots} report={report} />
+              <Scan
+                roots={settings.roots}
+                workers={settings.workers}
+                onWorkersChange={(workers) => updateSettings({ ...settings, workers })}
+                report={report}
+              />
             </section>
             <section {...show("review")}>
               <Review active={tab === "review"} report={report} />
@@ -80,6 +87,9 @@ export default function App() {
             </section>
             <section {...show("history")}>
               <History active={tab === "history"} report={report} />
+            </section>
+            <section {...show("convert")}>
+              <Convert report={report} />
             </section>
           </>
         )}

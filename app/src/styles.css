@@ -369,3 +369,18 @@ button.danger {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
+
+.option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.option-group > .muted {
+  font-size: 12px;
+}
+
+.text-danger {
+  color: var(--danger);
+}

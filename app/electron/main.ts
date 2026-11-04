@@ -141,15 +141,22 @@ function loadSettings(): Settings {
     return {
       roots: Array.isArray(raw.roots) ? raw.roots.filter((r): r is string => typeof r === "string") : [],
       dupRoot: typeof raw.dupRoot === "string" ? raw.dupRoot : "",
+      workers: clampWorkers(raw.workers),
     };
   } catch {
-    return { roots: [], dupRoot: "" };
+    return { roots: [], dupRoot: "", workers: DEFAULT_WORKERS };
   }
+}
+
+const DEFAULT_WORKERS = 4;
+function clampWorkers(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULT_WORKERS;
+  return Math.min(16, Math.max(1, n));
 }
 
 function saveSettings(s: Settings): void {
   fs.mkdirSync(userData(), { recursive: true });
-  const clean: Settings = { roots: s.roots, dupRoot: s.dupRoot };
+  const clean: Settings = { roots: s.roots, dupRoot: s.dupRoot, workers: clampWorkers(s.workers) };
   fs.writeFileSync(settingsPath(), JSON.stringify(clean, null, 2), "utf8");
 }
 
@@ -190,6 +197,19 @@ function registerIpc(): void {
     const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts);
     return res.canceled ? [] : res.filePaths;
   });
+  ipcMain.handle("dialog:pickFiles", async (): Promise<string[]> => {
+    const opts = {
+      properties: ["openFile" as const, "multiSelections" as const],
+      filters: [
+        {
+          name: "Videos",
+          extensions: ["ts", "mts", "m2ts", "mkv", "avi", "mov", "flv", "webm", "wmv", "m4v", "mp4"],
+        },
+      ],
+    };
+    const res = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts);
+    return res.canceled ? [] : res.filePaths;
+  });
   ipcMain.handle("settings:get", (): Settings => loadSettings());
   ipcMain.handle("settings:save", (_e, s: Settings): void => saveSettings(s));
   ipcMain.handle("engine:run", (_e, args: unknown): Promise<RunResult> => {
@@ -201,6 +221,11 @@ function registerIpc(): void {
   ipcMain.handle("engine:cancel", (): boolean => cancelEngine());
   ipcMain.handle("shell:openPath", (_e, p: string): Promise<string> => shell.openPath(p));
   ipcMain.handle("shell:showInFolder", (_e, p: string): void => shell.showItemInFolder(p));
+  ipcMain.handle("shell:trash", async (_e, p: unknown): Promise<void> => {
+    // Only files: never send a folder to the Recycle Bin by mistake.
+    if (typeof p !== "string" || !fs.statSync(p).isFile()) throw new Error("Not a file: " + String(p));
+    await shell.trashItem(p);
+  });
 }
 
 app.whenReady().then(() => {

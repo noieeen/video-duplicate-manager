@@ -298,3 +298,15 @@ def test_cli_scan_accepts_workers(tmp_path, make_video):
     settings = json.loads(conn.execute("SELECT settings FROM scans").fetchone()[0])
     assert settings["workers"] == 2
     conn.close()
+
+
+def test_stale_running_scan_is_closed_on_next_scan(tmp_path, make_video):
+    root = tmp_path / "root"
+    make_video(root / "a.mp4", source="testsrc", duration=10)
+    conn = _conn(tmp_path)
+    conn.execute("INSERT INTO scans(started_at, roots, settings, status) VALUES('x', '[]', '{}', 'running')")
+    conn.commit()
+    scan_mod.run_scan(conn, [str(root)], lambda *a, **k: None)
+    statuses = [r[0] for r in conn.execute("SELECT status FROM scans ORDER BY id")]
+    assert statuses == ["cancelled", "done"]
+    conn.close()
